@@ -5,7 +5,7 @@
     {
       "parameters": {
         "formTitle": "Kiểm tra Hanger",
-        "formDescription": "Tải lên file đơn hàng và file SOF tương ứng (.xls hoặc .xlsx). Rule được ưu tiên; DeepSeek hỗ trợ các dòng chưa phân loại khi đã bật trong .env. File gốc không bị chỉnh sửa.",
+        "formDescription": "Tải lên 1 file đơn hàng và một hoặc nhiều file SOF tương ứng (.xls hoặc .xlsx, tối đa 20 SOF). Rule được ưu tiên; DeepSeek hỗ trợ các dòng chưa phân loại khi đã bật trong .env. File gốc không bị chỉnh sửa.",
         "formFields": {
           "values": [
             {
@@ -17,10 +17,10 @@
               "requiredField": true
             },
             {
-              "fieldLabel": "File SOF tương ứng",
+              "fieldLabel": "Các file SOF tương ứng",
               "fieldName": "sof_workbook",
               "fieldType": "file",
-              "multipleFiles": false,
+              "multipleFiles": true,
               "acceptFileTypes": ".xls,.xlsx",
               "requiredField": true
             }
@@ -43,7 +43,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const item = $input.first();\nconst binary = item.binary ?? {};\nfor (const key of ['order_workbook', 'sof_workbook']) {\n  const file = binary[key];\n  if (!file) throw new Error(`Thiếu file upload: ${key}`);\n  const name = String(file.fileName ?? '');\n  if (!/\\.xlsx?$/i.test(name)) throw new Error(`${key} phải là file .xls hoặc .xlsx`);\n}\nreturn [{json: {overwrite: false}, binary}];"
+        "jsCode": "const item = $input.first();\nconst binary = item.binary ?? {};\nconst order = binary.order_workbook;\nif (!order) throw new Error('Thiếu file đơn hàng');\nif (!/\\.xlsx?$/i.test(String(order.fileName ?? ''))) throw new Error('File đơn hàng phải là .xls hoặc .xlsx');\nconst sofKeys = Object.keys(binary).filter((key) => key === 'sof_workbook' || /^sof_workbook_\\d+$/.test(key));\nsofKeys.sort((a, b) => {\n  if (a === 'sof_workbook') return -1;\n  if (b === 'sof_workbook') return 1;\n  return Number(a.split('_').pop()) - Number(b.split('_').pop());\n});\nif (sofKeys.length === 0) throw new Error('Cần tải lên ít nhất 1 file SOF');\nif (sofKeys.length > 20) throw new Error('Chỉ được tải tối đa 20 file SOF mỗi lần');\nconst names = new Set();\nfor (const key of sofKeys) {\n  const name = String(binary[key]?.fileName ?? '');\n  if (!/\\.xlsx?$/i.test(name)) throw new Error(`SOF ${name || key} phải là file .xls hoặc .xlsx`);\n  const normalized = name.toLocaleLowerCase();\n  if (names.has(normalized)) throw new Error(`Trùng tên file SOF: ${name}`);\n  names.add(normalized);\n}\nreturn [{json: {overwrite: false, sofBinaryFields: sofKeys.join(','), sofCount: sofKeys.length}, binary}];"
       },
       "id": "2b0ea8a7-5c58-4289-b872-447f1f1a9607",
       "name": "Validate Upload",
@@ -51,6 +51,38 @@
       "typeVersion": 2,
       "position": [
         -336,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "compress",
+        "binaryPropertyName": "={{ $json.sofBinaryFields }}",
+        "outputFormat": "zip",
+        "fileName": "sof-files.zip",
+        "binaryPropertyOutput": "sof_archive"
+      },
+      "id": "e6b1bf9a-9f97-41e6-922c-066531679aaa",
+      "name": "Đóng gói các SOF",
+      "type": "n8n-nodes-base.compression",
+      "typeVersion": 1.1,
+      "position": [
+        -96,
+        -96
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "2ac66da2-e503-4820-bf51-d46fbb15615b",
+      "name": "Ghép đơn hàng và SOF",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        144,
         0
       ]
     },
@@ -69,8 +101,8 @@
             },
             {
               "parameterType": "formBinaryData",
-              "name": "sof_workbook",
-              "inputDataFieldName": "sof_workbook"
+              "name": "sof_archive",
+              "inputDataFieldName": "sof_archive"
             },
             {
               "name": "overwrite",
@@ -87,7 +119,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        -96,
+        384,
         0
       ]
     },
@@ -100,7 +132,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        144,
+        624,
         0
       ]
     },
@@ -134,33 +166,33 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        384,
+        864,
         0
       ]
     },
     {
       "parameters": {
-        "jsCode": "return $input.all().map(({json}) => { const llm = json.llm?.enabled ? ` DeepSeek: ${json.llm.api_calls || 0} API calls.` : ' DeepSeek: tắt.'; return {json: {...json, status: 'COMPLETED_WITH_REVIEW', message: `Đã tạo ${json.output_file}. Mismatch: ${json.mismatch}; Review: ${json.review}.${llm}`}}; });"
+        "jsCode": "return $input.all().map(({json}) => {\n  const llm = json.llm?.enabled ? ` DeepSeek: ${json.llm.api_calls || 0} call, cache hit ${json.llm.cache?.hits ?? 0}.` : ' DeepSeek: tắt.';\n  const scope = `Đã kiểm account: ${(json.accounts_checked || []).join(', ') || 'không có'}.`;\n  const out = json.skipped_no_sof ? ` Bỏ qua ${json.skipped_no_sof} dòng của account chưa gửi SOF.` : '';\n  return {json: {...json, status: 'COMPLETED_WITH_REVIEW',\n    message: `${scope} Trong ${json.total_checked_rows} dòng: matched ${json.matched}, mismatch ${json.mismatch}, review ${json.review}.${out}${llm}`}};\n});"
       },
       "id": "45ef29a8-3190-4afb-8a31-cf86f172f7a6",
       "name": "Review Summary",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        624,
+        1104,
         -96
       ]
     },
     {
       "parameters": {
-        "jsCode": "return $input.all().map(({json}) => { const llm = json.llm?.enabled ? ` DeepSeek: ${json.llm.api_calls || 0} API calls.` : ' DeepSeek: tắt.'; return {json: {...json, status: 'COMPLETED', message: `Đã tạo ${json.output_file}; ${json.matched} dòng matched.${llm}`}}; });"
+        "jsCode": "return $input.all().map(({json}) => {\n  const llm = json.llm?.enabled ? ` DeepSeek: ${json.llm.api_calls || 0} call, cache hit ${json.llm.cache?.hits ?? 0}.` : ' DeepSeek: tắt.';\n  const scope = `Đã kiểm account: ${(json.accounts_checked || []).join(', ') || 'không có'}.`;\n  const out = json.skipped_no_sof ? ` Bỏ qua ${json.skipped_no_sof} dòng của account chưa gửi SOF.` : '';\n  return {json: {...json, status: 'COMPLETED',\n    message: `${scope} ${json.matched}/${json.total_checked_rows} dòng matched.${out}${llm}`}};\n});"
       },
       "id": "6349a1d8-1797-42d1-870c-c65bab17925b",
       "name": "Success Summary",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        624,
+        1104,
         96
       ]
     },
@@ -182,7 +214,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        864,
+        1344,
         380
       ]
     }
@@ -201,6 +233,33 @@
       ]
     },
     "Validate Upload": {
+      "main": [
+        [
+          {
+            "node": "Đóng gói các SOF",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Ghép đơn hàng và SOF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Đóng gói các SOF": {
+      "main": [
+        [
+          {
+            "node": "Ghép đơn hàng và SOF",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Ghép đơn hàng và SOF": {
       "main": [
         [
           {

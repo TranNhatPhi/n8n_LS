@@ -6,11 +6,12 @@ chép file vào thư mục input.
 Người dùng mở form n8n rồi tải lên:
 
 1. Một file đơn hàng `.xls` hoặc `.xlsx`.
-2. Một file SOF tương ứng `.xls` hoặc `.xlsx`.
+2. Một hoặc nhiều file SOF tương ứng `.xls` hoặc `.xlsx` (tối đa 20 file).
 
-n8n chuyển hai file qua mạng Docker nội bộ cho `hanger-worker`. Worker xử lý file
-trong thư mục tạm, kiểm tra source sheet/cells, tạo bản sao kết quả rồi tự xóa hai
-file upload tạm. File kết quả nằm trong `data/output` trên MacBook.
+n8n đóng gói các SOF rồi chuyển file đơn hàng và gói SOF qua mạng Docker nội bộ
+cho `hanger-worker`. Worker kiểm tra và đọc gói SOF an toàn, xử lý trong thư mục
+tạm, kiểm tra source sheet/cells, tạo bản sao kết quả rồi tự xóa file upload tạm.
+File kết quả nằm trong `data/output` trên MacBook.
 
 ## Kiến trúc và an toàn
 
@@ -48,9 +49,10 @@ Sau khi container chạy:
 5. Chọn **Execute Workflow** để lấy Test URL, hoặc Publish workflow để dùng
    Production URL
    `http://localhost:5678/form/f63ddfc0-8c14-4f22-9791-d13d5f6bc379`.
-6. Trên form, chọn file đơn hàng và file SOF rồi bấm xử lý.
+6. Trên form, chọn file đơn hàng; tại ô **Các file SOF tương ứng**, giữ
+   `Command` để chọn nhiều file (hoặc chọn một nhóm file), rồi bấm xử lý.
 
-Tên file SOF vẫn phải chứa Account, ví dụ Account `H040M` cần file như:
+Mỗi tên file SOF vẫn phải chứa Account tương ứng, ví dụ Account `H040M` cần file như:
 
 ```text
 H040M Stock Replenishment SO Form 8.31.26.xlsx
@@ -82,6 +84,12 @@ DeepSeek nhận các nhóm dòng đơn hàng đã bỏ PO và số lượng, cù
 cầu phân loại. Mặc định mỗi lần chạy tối đa 20 API calls, batch 12 nhóm/call và
 chỉ nhận kết quả có confidence từ 0.85. Có thể chỉnh các biến tương ứng trong
 `.env`; API key chỉ được truyền vào container `hanger-worker`.
+
+Ngoài các SOF có sheet theo nhóm sản phẩm như `TOPS`, `BOTTOMS`, `SETS`, worker
+cũng hiểu bảng theo Label trong sheet `PACKAGING` của SOF HBE. Một quyết định từ
+`PACKAGING` chỉ được nhận khi vùng ô trích dẫn chứa đúng Label của dòng đơn hàng.
+`FLATPACKED` có thể xác nhận Flat/không hanger. Nếu SOF ghi `Follow US Manual`
+nhưng không chứa mã hanger cụ thể, dòng vẫn ở `REVIEW` để tránh tự đoán mã.
 
 ## Kết quả
 
@@ -125,6 +133,10 @@ Giới hạn hiện tại là 100 MiB cho toàn bộ request. Có thể chỉnh 
 - `N8N_FORMDATA_FILE_SIZE_MAX` trong `compose.yaml`.
 - `HANGER_MAX_UPLOAD_MB` trong `compose.yaml`.
 
+Số SOF tối đa cho mỗi lần gửi mặc định là 20, cấu hình bằng
+`HANGER_MAX_SOF_FILES` trong `.env`. Form và worker đều chặn ở mức 20; nếu đổi
+giới hạn này, cần đổi cùng giá trị trong node **Validate Upload** của workflow.
+
 Không nên tăng giới hạn nếu Docker Desktop chưa được cấp đủ RAM và dung lượng đĩa.
 
 ## Rule và SOF
@@ -148,5 +160,5 @@ python3 -m pytest -q
 ```
 
 Test bao phủ tám dòng H040M mẫu, hai chiều mismatch, Hang/Flat trống, PO có số 0
-đầu, SOF mơ hồ, source không hợp lệ, upload validation và bảo toàn dữ liệu hanger
-nhập thủ công.
+đầu, SOF mơ hồ, source không hợp lệ, upload một/nhiều SOF, kiểm tra gói ZIP và
+bảo toàn dữ liệu hanger nhập thủ công.

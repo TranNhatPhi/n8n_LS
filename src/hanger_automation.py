@@ -47,6 +47,21 @@ ALIASES = {
     "size sticker hanger": "SIZE Sticker hanger",
 }
 
+# The only sheets a hanger decision may be sourced from. Sheets such as
+# "General Info" and "REPLESNISHMENT" carry general packing rules that are
+# qualified by phrases like "except the categories below", so a citation from
+# them is not evidence about one style and is rejected.
+CATEGORY_SOURCE_SHEETS = {
+    "HUGGIES", "SWEATER-YARN", "TOPS", "BOTTOMS", "COVERALLS", "SETS",
+    "OUTERWEAR", "GIRLS SWIMWEAR", "BOX SETS", "LACOSTE TOYS", "HOSIERY",
+    "UNDERWEAR", "COLD WEATHER", "BAGS", "BODYSUITS", "DRESSES",
+}
+
+# Some account SOFs use a label-driven packing table instead of one sheet per
+# product category. PACKAGING is accepted for LLM decisions only when the cited
+# cells contain the order's exact Label and a direct Flat/Hanger statement.
+LLM_SOURCE_SHEETS = CATEGORY_SOURCE_SHEETS | {"PACKAGING"}
+
 WRITE_FIELDS = [
     "Hanger code", "Hanger color", "Color Sizer", "Sticker hanger",
     "SIZE Sticker hanger",
@@ -531,7 +546,8 @@ def claim_is_supported(claim: str, evidence: str) -> bool:
     normalized_evidence = key(evidence)
     if normalized_claim == "no":
         return normalized_evidence == "no" or any(marker in normalized_evidence for marker in (
-            " no ", "no hanger", "hanger required no", "not required", "n/a", "flat pack",
+            " no ", "no hanger", "hanger required no", "not required", "n/a",
+            "flat pack", "flatpacked",
         )) or normalized_evidence.startswith("no ") or normalized_evidence.endswith(" no")
     if not normalized_claim:
         return False
@@ -547,7 +563,19 @@ def claim_is_supported(claim: str, evidence: str) -> bool:
     return matches >= min(2, len(set(tokens)))
 
 
-def validate_llm_evidence(sof_wb, decision: dict[str, Any]) -> tuple[bool, str]:
+def identifier_is_cited(identifier: str, evidence: str) -> bool:
+    """Match identifiers such as G1 or AK as complete tokens, not substrings."""
+    normalized = key(identifier)
+    if not normalized:
+        return False
+    return re.search(
+        rf"(?<![a-z0-9]){re.escape(normalized)}(?![a-z0-9])", key(evidence)
+    ) is not None
+
+
+def validate_llm_evidence(
+    sof_wb, decision: dict[str, Any], row: dict[str, str]
+) -> tuple[bool, str]:
     source = {
         "sheet": clean(decision.get("source_sheet")),
         "cells": clean(decision.get("source_cells")).upper(),
@@ -555,7 +583,24 @@ def validate_llm_evidence(sof_wb, decision: dict[str, Any]) -> tuple[bool, str]:
     valid, note = validate_source(sof_wb, source)
     if not valid:
         return False, note
+    source_sheet = clean(source["sheet"]).upper()
+    if source_sheet not in LLM_SOURCE_SHEETS:
+        return False, (
+            f"Cited sheet '{source['sheet']}' holds general packing rules, not a "
+            f"per-category hanger specification"
+        )
     evidence = cited_source_text(sof_wb, source["sheet"], source["cells"])
+    if source_sheet == "PACKAGING":
+        label = clean(row.get("Label"))
+        if not label:
+            return False, "PACKAGING evidence requires a non-blank order Label"
+        if not identifier_is_cited(label, evidence):
+            return False, (
+                f"Cited PACKAGING range does not contain order Label {label}"
+            )
+        evidence_key = key(evidence)
+        if "flatpack" not in evidence_key and "hanger" not in evidence_key:
+            return False, "Cited PACKAGING range has no Flat/Hanger requirement"
     sof_hf = normalize_hang_flat(decision.get("sof_hang_flat"))
     evidence_key = key(evidence)
     if sof_hf == "Hang" and "hang" not in evidence_key:
@@ -621,7 +666,7 @@ def resolve_llm_decision(
     }
     valid, note = validate_rule_result(candidate_rule, allowed)
     if valid:
-        valid, note = validate_llm_evidence(sof_wb, decision)
+        valid, note = validate_llm_evidence(sof_wb, decision, row)
     if not valid:
         base["validation_note"] = "; ".join(filter(None, (
             original_note, f"Rejected DeepSeek decision: {note}"
@@ -831,7 +876,8 @@ def run(input_path: Path, sof_root: Path, rules_path: Path, output_dir: Path,
         "sof_files": {}, "total_order_rows": 0, "matched": 0, "mismatch": 0,
         "review": 0, "skipped_existing_hanger_data": 0, "output_file": "",
         "result_file": "", "result_file_name": "", "errors": [],
-        "row_results": [], "skipped_rows": [],
+        "row_results": [], "skipped_rows": [], "skipped_no_sof": 0,
+        "accounts_checked": [], "accounts_skipped": [],
         "llm": {"enabled": llm_classifier is not None},
     }
     with tempfile.TemporaryDirectory(prefix="hanger_automation_") as temp_name:
@@ -851,6 +897,14 @@ def run(input_path: Path, sof_root: Path, rules_path: Path, output_dir: Path,
                 accounts.add(values["Account"].upper())
         audit["total_order_rows"] = len(rows)
         selections = {account: find_sof(sof_root, account) for account in accounts}
+        covered = sorted(a for a, sel in selections.items()
+                         if sel.status == "MATCHED" and sel.path)
+        audit["accounts_checked"] = covered
+        audit["accounts_skipped"] = sorted(set(accounts) - set(covered))
+        if not covered:
+            audit["errors"].append(
+                "No uploaded SOF matched any account in the order file; nothing was checked"
+            )
         sof_workbooks = {}
         for account, selection in selections.items():
             audit["sof_files"][account] = {
@@ -874,16 +928,18 @@ def run(input_path: Path, sof_root: Path, rules_path: Path, output_dir: Path,
                 })
                 continue
             if not selection or selection.status != "MATCHED" or not selection.path:
-                result = {
-                    "product_category": "", "sof_hang_flat": "", "hanger_code": "",
-                    "hanger_color": "", "color_sizer": "", "sticker_hanger": "",
-                    "size_sticker_hanger": "", "source_sheet": "", "source_cells": "",
-                    "match_method": "", "confidence": 0.0, "status": "REVIEW",
-                    "validation_note": selection.reason if selection else "Account is blank",
-                }
-            else:
-                rules = account_rules.get(account, [])
-                result = resolve_row(values, rules, allowed, sof_workbooks[account], selection.path)
+                # Only the accounts whose SOF was actually uploaded are in scope.
+                # Everything else is out of scope for this run, not a review item:
+                # counting it as REVIEW would bury the rows a human must really look at.
+                audit["skipped_no_sof"] += 1
+                audit["skipped_rows"].append({
+                    "row_number": row_number, "po_number": values.get("PO#", ""),
+                    "account": values.get("Account", ""),
+                    "reason": selection.reason if selection else "Account is blank",
+                })
+                continue
+            rules = account_rules.get(account, [])
+            result = resolve_row(values, rules, allowed, sof_workbooks[account], selection.path)
             processed.append({
                 "row_number": row_number,
                 "values": values,
@@ -960,6 +1016,7 @@ def run(input_path: Path, sof_root: Path, rules_path: Path, output_dir: Path,
             raise
         finally:
             wb.close()
+    audit["total_checked_rows"] = len(audit["row_results"])
     audit["output_file"] = str(output_path)
     result_path = output_path.with_name(output_path.stem + "_KETQUA.xlsx")
     try:
