@@ -1,0 +1,11 @@
+.git
+.venv
+.pytest_cache
+__pycache__
+*.pyc
+.env
+data/input/*
+data/output/*
+*_checked_*.xlsx
+*.audit.json
+

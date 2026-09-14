@@ -1,0 +1,287 @@
+{
+  "id": "HangerUploadDirect01",
+  "name": "Hanger Automation - Upload trực tiếp",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Kiểm tra Hanger",
+        "formDescription": "Tải lên file đơn hàng và file SOF tương ứng (.xls hoặc .xlsx). Rule được ưu tiên; DeepSeek hỗ trợ các dòng chưa phân loại khi đã bật trong .env. File gốc không bị chỉnh sửa.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "File đơn hàng",
+              "fieldName": "order_workbook",
+              "fieldType": "file",
+              "multipleFiles": false,
+              "acceptFileTypes": ".xls,.xlsx",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "File SOF tương ứng",
+              "fieldName": "sof_workbook",
+              "fieldType": "file",
+              "multipleFiles": false,
+              "acceptFileTypes": ".xls,.xlsx",
+              "requiredField": true
+            }
+          ]
+        },
+        "responseMode": "lastNode",
+        "options": {
+          "buttonLabel": "Kiểm tra và tạo file kết quả"
+        }
+      },
+      "id": "9bf86a37-54ff-4d11-9565-f55c25929c64",
+      "name": "Upload Order và SOF",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.6,
+      "position": [
+        -576,
+        0
+      ],
+      "webhookId": "f63ddfc0-8c14-4f22-9791-d13d5f6bc379"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\nconst binary = item.binary ?? {};\nfor (const key of ['order_workbook', 'sof_workbook']) {\n  const file = binary[key];\n  if (!file) throw new Error(`Thiếu file upload: ${key}`);\n  const name = String(file.fileName ?? '');\n  if (!/\\.xlsx?$/i.test(name)) throw new Error(`${key} phải là file .xls hoặc .xlsx`);\n}\nreturn [{json: {overwrite: false}, binary}];"
+      },
+      "id": "2b0ea8a7-5c58-4289-b872-447f1f1a9607",
+      "name": "Validate Upload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -336,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://hanger-worker:8080/run-upload",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "order_workbook",
+              "inputDataFieldName": "order_workbook"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "sof_workbook",
+              "inputDataFieldName": "sof_workbook"
+            },
+            {
+              "name": "overwrite",
+              "value": "={{ String($json.overwrite) }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 3600000
+        }
+      },
+      "id": "0d5d6c0f-ab43-4d62-a462-a1f7f5143d30",
+      "name": "Gửi File tới Hanger Worker",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -96,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const audit = $input.first().json;\nif (audit.status === 'ERROR') throw new Error(audit.error || 'Hanger worker failed');\nreturn [{json: {...audit, needsAttention: Number(audit.mismatch || 0) + Number(audit.review || 0) > 0}}];"
+      },
+      "id": "20d13068-4e9f-401e-826e-4bb485ff8c64",
+      "name": "Evaluate Audit",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        144,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "5ce23634-7a6a-4720-ab27-419424426138",
+              "leftValue": "={{ $json.needsAttention }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "c5a79ed0-3613-4fd2-958b-36eaac9a2f98",
+      "name": "Needs Review?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        384,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map(({json}) => { const llm = json.llm?.enabled ? ` DeepSeek: ${json.llm.api_calls || 0} API calls.` : ' DeepSeek: tắt.'; return {json: {...json, status: 'COMPLETED_WITH_REVIEW', message: `Đã tạo ${json.output_file}. Mismatch: ${json.mismatch}; Review: ${json.review}.${llm}`}}; });"
+      },
+      "id": "45ef29a8-3190-4afb-8a31-cf86f172f7a6",
+      "name": "Review Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        624,
+        -96
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map(({json}) => { const llm = json.llm?.enabled ? ` DeepSeek: ${json.llm.api_calls || 0} API calls.` : ' DeepSeek: tắt.'; return {json: {...json, status: 'COMPLETED', message: `Đã tạo ${json.output_file}; ${json.matched} dòng matched.${llm}`}}; });"
+      },
+      "id": "6349a1d8-1797-42d1-870c-c65bab17925b",
+      "name": "Success Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        624,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=http://hanger-worker:8080/result?file={{ encodeURIComponent($json.result_file_name) }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "id": "d4f8a1c6-5b93-4e72-9a18-6c2f0b7e3d55",
+      "name": "Tải File Kết Quả",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        864,
+        380
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Upload Order và SOF": {
+      "main": [
+        [
+          {
+            "node": "Validate Upload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Upload": {
+      "main": [
+        [
+          {
+            "node": "Gửi File tới Hanger Worker",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gửi File tới Hanger Worker": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Audit": {
+      "main": [
+        [
+          {
+            "node": "Needs Review?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Review?": {
+      "main": [
+        [
+          {
+            "node": "Review Summary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Success Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Review Summary": {
+      "main": [
+        [
+          {
+            "node": "Tải File Kết Quả",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Success Summary": {
+      "main": [
+        [
+          {
+            "node": "Tải File Kết Quả",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Ho_Chi_Minh"
+  },
+  "versionId": "2ddf7409-3541-4480-ad46-a8e1323144cb",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

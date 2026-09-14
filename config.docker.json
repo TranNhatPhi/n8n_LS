@@ -1,0 +1,8 @@
+{
+  "sof_root": "/tmp/hanger-upload/sof",
+  "rules_file": "/app/rules/hanger_rules.json",
+  "output_directory": "/data/output",
+  "overwrite_existing_hanger_data": false,
+  "order_sheet": null,
+  "header_scan_rows": 50
+}

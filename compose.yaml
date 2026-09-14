@@ -1,0 +1,96 @@
+name: hanger-automation
+
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:${N8N_VERSION:-2.38.7}
+    container_name: hanger-n8n
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${N8N_PORT:-5678}:5678"
+    environment:
+      TZ: Asia/Ho_Chi_Minh
+      GENERIC_TIMEZONE: Asia/Ho_Chi_Minh
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?Set N8N_ENCRYPTION_KEY in .env}
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+      N8N_UNVERIFIED_PACKAGES_ENABLED: "false"
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "true"
+      N8N_DEFAULT_BINARY_DATA_MODE: filesystem
+      N8N_FORMDATA_FILE_SIZE_MAX: "100"
+      NODES_EXCLUDE: '["n8n-nodes-base.executeCommand","n8n-nodes-base.readWriteFile"]'
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      hanger-worker:
+        condition: service_healthy
+    networks:
+      - hanger_net
+
+  hanger-redis:
+    image: redis:7-alpine
+    container_name: hanger-redis
+    restart: unless-stopped
+    # Cache is disposable: bounded memory, evict coldest keys, no disk persistence.
+    command: ["redis-server", "--save", "", "--appendonly", "no",
+              "--maxmemory", "512mb", "--maxmemory-policy", "allkeys-lru"]
+    expose:
+      - "6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - hanger_net
+
+  hanger-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    image: hanger-worker:local
+    container_name: hanger-worker
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Ho_Chi_Minh
+      HANGER_CONFIG: /app/config.docker.json
+      HANGER_API_PORT: "8080"
+      HANGER_MAX_UPLOAD_MB: "100"
+      HANGER_LLM_ENABLED: ${HANGER_LLM_ENABLED:-false}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_API_KEY_2: ${DEEPSEEK_API_KEY_2:-}
+      DEEPSEEK_API_KEY_3: ${DEEPSEEK_API_KEY_3:-}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-flash}
+      DEEPSEEK_TIMEOUT_SECONDS: ${DEEPSEEK_TIMEOUT_SECONDS:-90}
+      HANGER_LLM_BATCH_SIZE: ${HANGER_LLM_BATCH_SIZE:-12}
+      HANGER_LLM_MAX_CALLS: ${HANGER_LLM_MAX_CALLS:-20}
+      HANGER_LLM_MAX_EVIDENCE_CHARS: ${HANGER_LLM_MAX_EVIDENCE_CHARS:-45000}
+      HANGER_LLM_MIN_CONFIDENCE: ${HANGER_LLM_MIN_CONFIDENCE:-0.85}
+      HANGER_LLM_CONCURRENCY: ${HANGER_LLM_CONCURRENCY:-8}
+      HANGER_CACHE_URL: ${HANGER_CACHE_URL:-redis://hanger-redis:6379/0}
+      HANGER_CACHE_TTL_DAYS: ${HANGER_CACHE_TTL_DAYS:-30}
+    expose:
+      - "8080"
+    depends_on:
+      hanger-redis:
+        condition: service_healthy
+    volumes:
+      - type: bind
+        source: ./data/output
+        target: /data/output
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - hanger_net
+
+volumes:
+  n8n_data:
+
+networks:
+  hanger_net:
+    driver: bridge

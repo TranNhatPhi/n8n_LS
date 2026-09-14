@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "allowed_categories": ["BOTTOMS", "TOPS", "SETS", "COVERALLS", "BODYSUITS", "DRESSES", "OUTERWEAR", "OTHER"],
+  "accounts": {
+    "H040M": [
+      {
+        "id": "H040M-NKG-LEM316-26M316",
+        "match": {"ref_number": "NKG-LEM316", "style": "26M316"},
+        "result": {
+          "product_category": "BOTTOMS",
+          "sof_hang_flat": "Hang",
+          "hanger_code": "6110",
+          "hanger_color": "WHITE",
+          "color_sizer": "White size clip/black lettering",
+          "sticker_hanger": "NO",
+          "size_sticker_hanger": "NO"
+        },
+        "source": {"sheet": "BOTTOMS", "cells": "B15:G18"}
+      },
+      {
+        "id": "H040M-NKG-LEM316-36M316",
+        "match": {"ref_number": "NKG-LEM316", "style": "36M316"},
+        "result": {
+          "product_category": "BOTTOMS",
+          "sof_hang_flat": "Hang",
+          "hanger_code": "6110",
+          "hanger_color": "WHITE",
+          "color_sizer": "White size clip/black lettering",
+          "sticker_hanger": "NO",
+          "size_sticker_hanger": "NO"
+        },
+        "source": {"sheet": "BOTTOMS", "cells": "B15:G18"}
+      },
+      {
+        "id": "H040M-NKG-LEM316-FLAT-STYLES",
+        "match": {
+          "ref_number": "NKG-LEM316",
+          "style_any": ["3XR316", "34R316", "35R316", "36R316"]
+        },
+        "result": {
+          "product_category": "BOTTOMS",
+          "sof_hang_flat": "Flat",
+          "hanger_code": "NO",
+          "hanger_color": "NO",
+          "color_sizer": "NO",
+          "sticker_hanger": "NO",
+          "size_sticker_hanger": "NO"
+        },
+        "source": {"sheet": "BOTTOMS", "cells": "B15:G18"}
+      }
+    ]
+  }
+}
+

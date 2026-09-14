@@ -1,0 +1,9 @@
+{
+  "sof_root": "\\\\125.212.216.10\\LeadingstarSMB\\Public\\BU1\\HADDAD\\3. TAI LIEU NHAN & DONG GOI\\3. SO FORM",
+  "rules_file": "rules/hanger_rules.json",
+  "output_directory": "C:\\n8n-data\\hanger-output",
+  "overwrite_existing_hanger_data": false,
+  "order_sheet": null,
+  "header_scan_rows": 50
+}
+

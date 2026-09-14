@@ -1,0 +1,152 @@
+# Hanger Automation — upload trực tiếp vào n8n
+
+Dự án chạy trên Docker Desktop cho MacBook. Không cần kết nối SMB và không cần
+chép file vào thư mục input.
+
+Người dùng mở form n8n rồi tải lên:
+
+1. Một file đơn hàng `.xls` hoặc `.xlsx`.
+2. Một file SOF tương ứng `.xls` hoặc `.xlsx`.
+
+n8n chuyển hai file qua mạng Docker nội bộ cho `hanger-worker`. Worker xử lý file
+trong thư mục tạm, kiểm tra source sheet/cells, tạo bản sao kết quả rồi tự xóa hai
+file upload tạm. File kết quả nằm trong `data/output` trên MacBook.
+
+## Kiến trúc và an toàn
+
+- `hanger-n8n`: image n8n chính thức, UI tại `http://localhost:5678`.
+- `hanger-worker`: Python, OpenPyXL và LibreOffice để xử lý `.xlsx`/`.xls`.
+- Worker không publish cổng ra MacBook; chỉ n8n gọi được.
+- `Execute Command` và `Read/Write Files from Disk` bị tắt trong n8n.
+- Binary upload được lưu bằng filesystem mode trong Docker volume thay vì RAM.
+- File đơn hàng gốc không bao giờ bị sửa.
+- Chỉ dòng `MATCHED` được ghi hanger; `MISMATCH` và `REVIEW` đi vào sheet
+  `HANGER REVIEW`.
+- Rule đã duyệt luôn chạy trước. DeepSeek chỉ xử lý các dòng chưa có rule và kết
+  quả LLM vẫn phải vượt qua kiểm tra category, Hang/Flat, độ tin cậy, sheet/range
+  nguồn và nội dung trích dẫn trong SOF.
+- Không có SMB username/password trong repository, workflow hoặc container.
+
+## Khởi động trên MacBook
+
+Docker Desktop phải đang mở. Chạy:
+
+```bash
+cd /Users/trannhatphi/Desktop/n8n_LS
+./scripts/start-macos.sh
+```
+
+Lần đầu, script tự tạo `.env` và sinh khóa mã hóa riêng cho n8n. Không còn bước
+kiểm tra `/Volumes/LeadingstarSMB`.
+
+Sau khi container chạy:
+
+1. Mở [http://localhost:5678](http://localhost:5678).
+2. Tạo tài khoản owner nếu n8n yêu cầu.
+3. Import `n8n/hanger-automation.workflow.json`.
+4. Mở node **Upload Order và SOF**.
+5. Chọn **Execute Workflow** để lấy Test URL, hoặc Publish workflow để dùng
+   Production URL
+   `http://localhost:5678/form/f63ddfc0-8c14-4f22-9791-d13d5f6bc379`.
+6. Trên form, chọn file đơn hàng và file SOF rồi bấm xử lý.
+
+Tên file SOF vẫn phải chứa Account, ví dụ Account `H040M` cần file như:
+
+```text
+H040M Stock Replenishment SO Form 8.31.26.xlsx
+```
+
+Điều này giữ nguyên nguyên tắc không đoán file SOF. Nếu tên SOF không khớp
+Account, dòng sẽ trả về `REVIEW`.
+
+## Bật DeepSeek
+
+Không gửi API key qua chat và không đặt API key trong workflow JSON. Mở `.env`
+trên MacBook rồi thêm hoặc chỉnh các dòng:
+
+```dotenv
+HANGER_LLM_ENABLED=true
+DEEPSEEK_API_KEY=sk-your-key-here
+DEEPSEEK_MODEL=deepseek-flash
+```
+
+Sau đó build lại worker:
+
+```bash
+docker compose up -d --build hanger-worker
+docker compose exec hanger-worker python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8080/health').read().decode())"
+```
+
+DeepSeek nhận các nhóm dòng đơn hàng đã bỏ PO và số lượng, cùng phần văn bản có
+địa chỉ ô từ những sheet SOF liên quan. Các dòng trùng điều kiện chỉ tạo một yêu
+cầu phân loại. Mặc định mỗi lần chạy tối đa 20 API calls, batch 12 nhóm/call và
+chỉ nhận kết quả có confidence từ 0.85. Có thể chỉnh các biến tương ứng trong
+`.env`; API key chỉ được truyền vào container `hanger-worker`.
+
+## Kết quả
+
+```text
+data/output/<ten-file>_checked_YYYYMMDD_HHMMSS.xlsx
+data/output/<ten-file>_checked_YYYYMMDD_HHMMSS.audit.json
+```
+
+Audit JSON chứa kết quả cho từng dòng, SOF source, sheet/cells, match method,
+confidence, trạng thái và validation note.
+
+## Lệnh vận hành
+
+```bash
+# Trạng thái
+docker compose ps
+
+# Xem log xử lý
+docker compose logs -f hanger-worker
+
+# Xem log n8n
+docker compose logs -f n8n
+
+# Dừng nhưng giữ workflow và cấu hình n8n
+docker compose down
+
+# Chạy lại
+docker compose up -d
+
+# Build lại sau khi sửa Python hoặc rules
+docker compose up -d --build hanger-worker
+```
+
+Không dùng `docker compose down -v` trừ khi muốn xóa database, workflows và
+credential encryption state của n8n.
+
+## Giới hạn upload
+
+Giới hạn hiện tại là 100 MiB cho toàn bộ request. Có thể chỉnh đồng thời:
+
+- `N8N_FORMDATA_FILE_SIZE_MAX` trong `compose.yaml`.
+- `HANGER_MAX_UPLOAD_MB` trong `compose.yaml`.
+
+Không nên tăng giới hạn nếu Docker Desktop chưa được cấp đủ RAM và dung lượng đĩa.
+
+## Rule và SOF
+
+- `rules/hanger_rules.json`: rules đã duyệt; hiện chứa các case H040M đã cung cấp.
+- `config.docker.json`: output path và rules path trong worker.
+- `src/hanger_automation.py`: rule engine và Excel writer.
+- `src/worker_api.py`: nhận file multipart từ n8n và quản lý thư mục tạm.
+
+Mỗi lần sửa rule hoặc code Python, chạy lại:
+
+```bash
+docker compose up -d --build hanger-worker
+```
+
+## Kiểm thử
+
+```bash
+python3 -m pip install -r requirements.txt
+python3 -m pytest -q
+```
+
+Test bao phủ tám dòng H040M mẫu, hai chiều mismatch, Hang/Flat trống, PO có số 0
+đầu, SOF mơ hồ, source không hợp lệ, upload validation và bảo toàn dữ liệu hanger
+nhập thủ công.
