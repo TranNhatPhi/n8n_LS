@@ -336,9 +336,11 @@ VALUE_BLOCK = (
     "- A real value: the evidence states it.\n"
     "- NO: the evidence positively states that none is required.\n"
     f"- {NOT_STATED}: the evidence is silent about this field.\n"
-    f"Writing NO for something you simply could not find is the single worst error you can "
-    f"make here, because it is indistinguishable downstream from a real 'none required'. "
-    f"When in doubt use {NOT_STATED} or status REVIEW."
+    "For color_sizer, sticker_hanger and size_sticker_hanger a SOF lists the accessory only "
+    "where it is needed, so silence means none is needed: answer NO. For hanger_code and "
+    f"hanger_color silence means you have not found the governing rule: answer {NOT_STATED}, "
+    "which sends the row to a human.\n"
+    "Never report a real-looking value you did not read in the cited evidence."
 )
 
 HANG_INVARIANT_BLOCK = (
@@ -673,9 +675,9 @@ class DeepSeekClassifier:
             "sof_text_evidence" if text_mode else "sof_cell_evidence": evidence,
             "final_reminder": (
                 f"Cite before you answer, then read each value verbatim off the cited evidence. "
-                f"Use {NOT_STATED} or status REVIEW for anything the evidence does not state - "
-                f"never NO. When sof_hang_flat is Hang, hanger_code and hanger_color must be "
-                f"real values. Return exactly {len(order_groups)} "
+                f"When sof_hang_flat is Hang, hanger_code and hanger_color must be real values "
+                f"from the evidence - use {NOT_STATED} if you could not find them, never NO. "
+                f"Return exactly {len(order_groups)} "
                 f"{'decision' if len(order_groups) == 1 else 'decisions'}, "
                 "one per group_id: " + ", ".join(sorted(groups))
             ),

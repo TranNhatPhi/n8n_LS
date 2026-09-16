@@ -131,8 +131,15 @@ SOURCE_RANGE_RE = re.compile(
 MAX_SOURCE_RANGES = 3
 
 # Value reserved for the LLM to say a field is absent from the SOF. It is never
-# written to a workbook: it forces the row to REVIEW.
+# written to a workbook.
 NOT_STATED = "NOT_STATED"
+
+# A SOF names an accessory only where it is required, so for these three
+# "not stated" and "none required" are the same fact and NOT_STATED collapses to
+# NO. For the hanger itself they are not the same: an unstated code or colour
+# means the governing rule was never found, so it stays NOT_STATED and the row
+# is reviewed.
+ACCESSORY_FIELDS = ("color_sizer", "sticker_hanger", "size_sticker_hanger")
 
 
 class AutomationError(RuntimeError):
@@ -845,6 +852,10 @@ def resolve_llm_decision(
     if not isinstance(decision, dict):
         base["validation_note"] = f"{original_note}; DeepSeek returned no decision".strip("; ")
         return base
+    decision = dict(decision)
+    for field in ACCESSORY_FIELDS:
+        if key(decision.get(field)) == key(NOT_STATED):
+            decision[field] = "NO"
     reasoning = clean(decision.get("reasoning"))
     if clean(decision.get("status")).upper() != "MATCHED":
         llm_note = f"DeepSeek requested review: {reasoning or 'insufficient SOF evidence'}"

@@ -626,6 +626,38 @@ def test_unrelated_na_does_not_license_a_no_claim(tmp_path):
     assert "does not support color_sizer" in result["validation_note"]
 
 
+def test_not_stated_accessory_means_none_required_but_hanger_is_reviewed(tmp_path):
+    """Silence about a sticker is absence; silence about the hanger is a miss."""
+    sof = make_split_evidence_sof(tmp_path)
+    wb = load_workbook(sof, data_only=True)
+    row = {"Account": "H040M", "Label": "WH", "Hang/Flat": "Hang"}
+    base = {
+        "status": "MATCHED", "product_category": "SETS", "sof_hang_flat": "Hang",
+        "hanger_code": "496/9508", "hanger_color": "WHITE",
+        "color_sizer": "White size clip / black lettering",
+        "source_sheet": "SETS", "source_cells": ["A21:C23", "B27:B27"],
+        "confidence": 0.99, "reasoning": "Table plus the sentence below it.",
+    }
+
+    accessory = resolve_llm_decision(
+        row, llm_review_state(),
+        dict(base, sticker_hanger="NOT_STATED", size_sticker_hanger="NOT_STATED"),
+        {"SETS"}, wb, sof, min_confidence=0.85,
+    )
+    assert accessory["status"] == "MATCHED", accessory["validation_note"]
+    assert accessory["sticker_hanger"] == "NO"
+
+    hanger = resolve_llm_decision(
+        row, llm_review_state(),
+        dict(base, hanger_color="NOT_STATED", sticker_hanger="NO",
+             size_sticker_hanger="NO"),
+        {"SETS"}, wb, sof, min_confidence=0.85,
+    )
+    wb.close()
+    assert hanger["status"] == "REVIEW"
+    assert "SOF does not state: hanger_color" in hanger["validation_note"]
+
+
 def test_a_decision_may_cite_several_ranges(tmp_path):
     sof = make_split_evidence_sof(tmp_path)
     wb = load_workbook(sof, data_only=True)
