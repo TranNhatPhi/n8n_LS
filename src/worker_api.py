@@ -43,10 +43,15 @@ def safe_file_name(raw_name: Any, field_name: str) -> str:
     return filename
 
 
+# Orders and SOFs accept the same formats. Word/PDF is read for the text it
+# states; a scan without a text layer is rejected rather than guessed at.
+UPLOAD_SUFFIXES = {".xls", ".xlsx", ".docx", ".pdf"}
+
+
 def safe_upload_name(raw_name: Any, field_name: str) -> str:
     filename = safe_file_name(raw_name, field_name)
-    if Path(filename).suffix.casefold() not in {".xls", ".xlsx"}:
-        raise AutomationError(f"{field_name} must be an .xls or .xlsx workbook")
+    if Path(filename).suffix.casefold() not in UPLOAD_SUFFIXES:
+        raise AutomationError(f"{field_name} must be {', '.join(sorted(UPLOAD_SUFFIXES))}")
     return filename
 
 
@@ -58,6 +63,34 @@ def validate_workbook_bytes(upload: Upload, field_name: str) -> None:
         raise AutomationError(f"{field_name} is not a valid .xlsx file")
     if suffix == ".xls" and not upload.content.startswith(XLS_MAGIC):
         raise AutomationError(f"{field_name} is not a valid legacy .xls file")
+
+
+def validate_upload_bytes(upload: Upload, field_name: str = "sof_workbook") -> None:
+    suffix = Path(upload.filename).suffix.casefold()
+    if not upload.content:
+        raise AutomationError(f"{field_name} is empty")
+    if suffix in {".xls", ".xlsx"}:
+        validate_workbook_bytes(upload, field_name)
+    elif suffix == ".docx":
+        if not upload.content.startswith(b"PK"):
+            raise AutomationError(f"{field_name} is not a valid .docx file")
+        try:
+            with zipfile.ZipFile(io.BytesIO(upload.content)) as archive:
+                members = archive.infolist()
+                if "word/document.xml" not in archive.namelist():
+                    raise AutomationError(f"{field_name} is not a Word .docx document")
+                if len(members) > 3000 or sum(item.file_size for item in members) > 100 * 1024 * 1024:
+                    raise AutomationError(f"{field_name} .docx expands beyond the safe limit")
+                if any(item.flag_bits & 0x1 for item in members):
+                    raise AutomationError("Password-protected .docx files are not supported")
+        except zipfile.BadZipFile as exc:
+            raise AutomationError(f"{field_name} is not a valid .docx file") from exc
+    elif suffix == ".pdf" and not upload.content.startswith(b"%PDF-"):
+        raise AutomationError(f"{field_name} is not a valid .pdf file")
+
+
+def validate_sof_bytes(upload: Upload) -> None:
+    validate_upload_bytes(upload, "sof_workbook")
 
 
 def parse_multipart(
@@ -105,10 +138,10 @@ def unpack_sof_archive(
     with archive:
         members = [member for member in archive.infolist() if not member.is_dir()]
         if not members:
-            raise AutomationError("sof_archive contains no SOF workbooks")
+            raise AutomationError("sof_archive contains no SOF files")
         if len(members) > max_sof_files:
             raise AutomationError(
-                f"At most {max_sof_files} SOF workbooks may be uploaded"
+                f"At most {max_sof_files} SOF files may be uploaded"
             )
         declared_size = sum(member.file_size for member in members)
         if declared_size > max_uncompressed_bytes:
@@ -128,7 +161,7 @@ def unpack_sof_archive(
             if actual_size > max_uncompressed_bytes:
                 raise AutomationError("Uncompressed SOF files exceed the upload limit")
             workbook = Upload(filename, content)
-            validate_workbook_bytes(workbook, "sof_workbook")
+            validate_sof_bytes(workbook)
             uploads.append(workbook)
         return uploads
 
@@ -154,7 +187,7 @@ def collect_uploaded_workbooks(
         safe_upload_name(order_uploads[0].filename, "order_workbook"),
         order_uploads[0].content,
     )
-    validate_workbook_bytes(order_upload, "order_workbook")
+    validate_upload_bytes(order_upload, "order_workbook")
 
     direct_sofs = [
         upload
@@ -175,13 +208,13 @@ def collect_uploaded_workbooks(
             workbook = Upload(
                 safe_upload_name(upload.filename, "sof_workbook"), upload.content
             )
-            validate_workbook_bytes(workbook, "sof_workbook")
+            validate_sof_bytes(workbook)
             sofs.append(workbook)
 
     if not sofs:
-        raise AutomationError("At least one SOF workbook must be uploaded")
+        raise AutomationError("At least one SOF file must be uploaded")
     if len(sofs) > max_sof_files:
-        raise AutomationError(f"At most {max_sof_files} SOF workbooks may be uploaded")
+        raise AutomationError(f"At most {max_sof_files} SOF files may be uploaded")
     duplicate_names = sorted({
         upload.filename
         for upload in sofs

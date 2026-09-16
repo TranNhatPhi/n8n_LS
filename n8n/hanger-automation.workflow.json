@@ -5,7 +5,7 @@
     {
       "parameters": {
         "formTitle": "Kiểm tra Hanger",
-        "formDescription": "Tải lên 1 file đơn hàng và một hoặc nhiều file SOF tương ứng (.xls hoặc .xlsx, tối đa 20 SOF). Rule được ưu tiên; DeepSeek hỗ trợ các dòng chưa phân loại khi đã bật trong .env. File gốc không bị chỉnh sửa.",
+        "formDescription": "Tải lên 1 file đơn hàng và tối đa 20 SOF (.xls, .xlsx, .docx hoặc .pdf). Word/PDF chỉ đọc chữ có sẵn, không OCR; file scan không có chữ sẽ bị từ chối. Đơn hàng Word/PDF được chuyển thành bảng Excel chuẩn; cột nào file không ghi (thường là Account và Hang/Flat) sẽ để trống và dòng đó vào REVIEW chứ không đoán. DeepSeek hỗ trợ các dòng chưa phân loại khi đã bật trong .env. File gốc không bị chỉnh sửa.",
         "formFields": {
           "values": [
             {
@@ -13,7 +13,7 @@
               "fieldName": "order_workbook",
               "fieldType": "file",
               "multipleFiles": false,
-              "acceptFileTypes": ".xls,.xlsx",
+              "acceptFileTypes": ".xls,.xlsx,.docx,.pdf",
               "requiredField": true
             },
             {
@@ -21,7 +21,7 @@
               "fieldName": "sof_workbook",
               "fieldType": "file",
               "multipleFiles": true,
-              "acceptFileTypes": ".xls,.xlsx",
+              "acceptFileTypes": ".xls,.xlsx,.docx,.pdf",
               "requiredField": true
             }
           ]
@@ -43,7 +43,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const item = $input.first();\nconst binary = item.binary ?? {};\nconst order = binary.order_workbook;\nif (!order) throw new Error('Thiếu file đơn hàng');\nif (!/\\.xlsx?$/i.test(String(order.fileName ?? ''))) throw new Error('File đơn hàng phải là .xls hoặc .xlsx');\nconst sofKeys = Object.keys(binary).filter((key) => key === 'sof_workbook' || /^sof_workbook_\\d+$/.test(key));\nsofKeys.sort((a, b) => {\n  if (a === 'sof_workbook') return -1;\n  if (b === 'sof_workbook') return 1;\n  return Number(a.split('_').pop()) - Number(b.split('_').pop());\n});\nif (sofKeys.length === 0) throw new Error('Cần tải lên ít nhất 1 file SOF');\nif (sofKeys.length > 20) throw new Error('Chỉ được tải tối đa 20 file SOF mỗi lần');\nconst names = new Set();\nfor (const key of sofKeys) {\n  const name = String(binary[key]?.fileName ?? '');\n  if (!/\\.xlsx?$/i.test(name)) throw new Error(`SOF ${name || key} phải là file .xls hoặc .xlsx`);\n  const normalized = name.toLocaleLowerCase();\n  if (names.has(normalized)) throw new Error(`Trùng tên file SOF: ${name}`);\n  names.add(normalized);\n}\nreturn [{json: {overwrite: false, sofBinaryFields: sofKeys.join(','), sofCount: sofKeys.length}, binary}];"
+        "jsCode": "const item = $input.first();\nconst binary = item.binary ?? {};\nconst order = binary.order_workbook;\nif (!order) throw new Error('Thiếu file đơn hàng');\nif (!/\\.(?:xls|xlsx|docx|pdf)$/i.test(String(order.fileName ?? ''))) throw new Error('File đơn hàng phải là .xls, .xlsx, .docx hoặc .pdf');\nconst sofKeys = Object.keys(binary).filter((key) => key === 'sof_workbook' || /^sof_workbook_\\d+$/.test(key));\nsofKeys.sort((a, b) => {\n  if (a === 'sof_workbook') return -1;\n  if (b === 'sof_workbook') return 1;\n  return Number(a.split('_').pop()) - Number(b.split('_').pop());\n});\nif (sofKeys.length === 0) throw new Error('Cần tải lên ít nhất 1 file SOF');\nif (sofKeys.length > 20) throw new Error('Chỉ được tải tối đa 20 file SOF mỗi lần');\nconst names = new Set();\nfor (const key of sofKeys) {\n  const name = String(binary[key]?.fileName ?? '');\n  if (!/\\.(?:xls|xlsx|docx|pdf)$/i.test(name)) throw new Error(`SOF ${name || key} phải là .xls, .xlsx, .docx hoặc .pdf`);\n  const normalized = name.toLocaleLowerCase();\n  if (names.has(normalized)) throw new Error(`Trùng tên file SOF: ${name}`);\n  names.add(normalized);\n}\nreturn [{json: {overwrite: false, sofBinaryFields: sofKeys.join(','), sofCount: sofKeys.length}, binary}];"
       },
       "id": "2b0ea8a7-5c58-4289-b872-447f1f1a9607",
       "name": "Validate Upload",
@@ -125,7 +125,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const audit = $input.first().json;\nif (audit.status === 'ERROR') throw new Error(audit.error || 'Hanger worker failed');\nreturn [{json: {...audit, needsAttention: Number(audit.mismatch || 0) + Number(audit.review || 0) > 0}}];"
+        "jsCode": "const audit = $input.first().json;\nif (audit.status === 'ERROR') throw new Error(audit.error || 'Hanger worker failed');\n// A row DeepSeek resolved is MATCHED but was never checked against an approved\n// rule, so counting only mismatch+review would let it reach the factory unseen.\nconst rows = Array.isArray(audit.row_results) ? audit.row_results : [];\nconst llmMatched = rows.filter((r) => r.status === 'MATCHED' && String(r.match_method || '').startsWith('LLM_')).length;\nreturn [{json: {...audit, llm_matched: llmMatched, needsAttention: Number(audit.mismatch || 0) + Number(audit.review || 0) + llmMatched > 0}}];"
       },
       "id": "20d13068-4e9f-401e-826e-4bb485ff8c64",
       "name": "Evaluate Audit",
@@ -172,7 +172,7 @@
     },
     {
       "parameters": {
-        "jsCode": "return $input.all().map(({json}) => {\n  const llm = json.llm?.enabled ? ` DeepSeek: ${json.llm.api_calls || 0} call, cache hit ${json.llm.cache?.hits ?? 0}.` : ' DeepSeek: tắt.';\n  const scope = `Đã kiểm account: ${(json.accounts_checked || []).join(', ') || 'không có'}.`;\n  const out = json.skipped_no_sof ? ` Bỏ qua ${json.skipped_no_sof} dòng của account chưa gửi SOF.` : '';\n  return {json: {...json, status: 'COMPLETED_WITH_REVIEW',\n    message: `${scope} Trong ${json.total_checked_rows} dòng: matched ${json.matched}, mismatch ${json.mismatch}, review ${json.review}.${out}${llm}`}};\n});"
+        "jsCode": "return $input.all().map(({json}) => {\n  const llm = json.llm?.enabled ? ` DeepSeek: ${json.llm.api_calls || 0} call, cache hit ${json.llm.cache?.hits ?? 0}.` : ' DeepSeek: tắt.';\n  const scope = `Đã kiểm account: ${(json.accounts_checked || []).join(', ') || 'không có'}.`;\n  const out = json.skipped_no_sof ? ` Bỏ qua ${json.skipped_no_sof} dòng của account chưa gửi SOF.` : '';\n  const unverified = json.llm_matched ? ` Cần đối chiếu tay: ${json.llm_matched} dòng matched do DeepSeek suy ra, không theo luật đã duyệt.` : '';\n  const src = json.order_source || {};\n  const doc = (src.format === 'pdf' || src.format === 'docx')\n    ? ` Đơn hàng ${src.format.toUpperCase()}: đọc ${src.extracted_rows} dòng, thiếu cột ${(src.fields_missing || []).join(', ') || 'không'}.`\n    : '';\n  return {json: {...json, status: 'COMPLETED_WITH_REVIEW',\n    message: `${scope} Trong ${json.total_checked_rows} dòng: matched ${json.matched}, mismatch ${json.mismatch}, review ${json.review}.${unverified}${out}${doc}${llm}`}};\n});"
       },
       "id": "45ef29a8-3190-4afb-8a31-cf86f172f7a6",
       "name": "Review Summary",
@@ -185,7 +185,7 @@
     },
     {
       "parameters": {
-        "jsCode": "return $input.all().map(({json}) => {\n  const llm = json.llm?.enabled ? ` DeepSeek: ${json.llm.api_calls || 0} call, cache hit ${json.llm.cache?.hits ?? 0}.` : ' DeepSeek: tắt.';\n  const scope = `Đã kiểm account: ${(json.accounts_checked || []).join(', ') || 'không có'}.`;\n  const out = json.skipped_no_sof ? ` Bỏ qua ${json.skipped_no_sof} dòng của account chưa gửi SOF.` : '';\n  return {json: {...json, status: 'COMPLETED',\n    message: `${scope} ${json.matched}/${json.total_checked_rows} dòng matched.${out}${llm}`}};\n});"
+        "jsCode": "return $input.all().map(({json}) => {\n  const llm = json.llm?.enabled ? ` DeepSeek: ${json.llm.api_calls || 0} call, cache hit ${json.llm.cache?.hits ?? 0}.` : ' DeepSeek: tắt.';\n  const scope = `Đã kiểm account: ${(json.accounts_checked || []).join(', ') || 'không có'}.`;\n  const out = json.skipped_no_sof ? ` Bỏ qua ${json.skipped_no_sof} dòng của account chưa gửi SOF.` : '';\n  const src = json.order_source || {};\n  const doc = (src.format === 'pdf' || src.format === 'docx')\n    ? ` Đơn hàng ${src.format.toUpperCase()}: đọc ${src.extracted_rows} dòng, thiếu cột ${(src.fields_missing || []).join(', ') || 'không'}.`\n    : '';\n  return {json: {...json, status: 'COMPLETED',\n    message: `${scope} ${json.matched}/${json.total_checked_rows} dòng matched.${out}${doc}${llm}`}};\n});"
       },
       "id": "6349a1d8-1797-42d1-870c-c65bab17925b",
       "name": "Success Summary",
@@ -217,6 +217,25 @@
         1344,
         380
       ]
+    },
+    {
+      "parameters": {
+        "operation": "completion",
+        "respondWith": "returnBinary",
+        "inputDataFieldName": "data",
+        "completionTitle": "Đã kiểm tra xong",
+        "completionMessage": "=File {{ $('Evaluate Audit').first().json.result_file_name }} đang được tải xuống. Trong {{ $('Evaluate Audit').first().json.total_checked_rows }} dòng: matched {{ $('Evaluate Audit').first().json.matched }}, mismatch {{ $('Evaluate Audit').first().json.mismatch }}, review {{ $('Evaluate Audit').first().json.review }}.",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 2.5,
+      "position": [
+        1544,
+        380
+      ],
+      "id": "b7e4a1c2-5d36-4f81-9a0e-2c7f5d8e4b13",
+      "name": "Tải File Về Máy",
+      "webhookId": "9f2c7a15-3d64-4b08-bb51-7e0c9d43a6f2"
     }
   ],
   "pinData": {},
@@ -326,6 +345,17 @@
         [
           {
             "node": "Tải File Kết Quả",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tải File Kết Quả": {
+      "main": [
+        [
+          {
+            "node": "Tải File Về Máy",
             "type": "main",
             "index": 0
           }

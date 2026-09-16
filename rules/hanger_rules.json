@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "allowed_categories": ["BOTTOMS", "TOPS", "SETS", "COVERALLS", "BODYSUITS", "DRESSES", "OUTERWEAR", "OTHER"],
+  "allowed_categories": ["BOTTOMS", "TOPS", "SETS", "COVERALLS", "BODYSUITS", "DRESSES", "OUTERWEAR", "HOSIERY", "UNDERWEAR", "COLD WEATHER", "BAGS", "GIRLS SWIMWEAR", "SWEATER-YARN", "BOX SETS", "HUGGIES", "LACOSTE TOYS", "OTHER"],
   "accounts": {
     "H040M": [
       {

@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from hanger_automation import (  # noqa: E402
     find_sof,
+    infer_category,
     resolve_llm_decision,
     run,
 )
@@ -30,10 +31,13 @@ from worker_api import (  # noqa: E402
 
 HEADERS = [
     "Division", "Season", "Year", "Ref#", "Style", "Product Description",
-    "Color", "Label", "Account", "PO#", "PO Qty", "Size Configuration",
-    "Pack Ratio", "Master Box Quantity", "Hang/Flat", "Hanger code",
-    "Hanger color", "Color Sizer", "Sticker hanger", "SIZE Sticker hanger",
+    "Color", "Label", "Label Name", "Account", "PO#", "PO Qty",
+    "Size Configuration", "Pack Ratio", "Master Box Quantity", "Hang/Flat",
+    "Hanger code", "Hanger color", "Color Sizer", "Sticker hanger",
+    "SIZE Sticker hanger",
 ]
+
+LABEL_NAMES = {"WH": "WITH HANGER", "": ""}
 
 CASES = [
     (751419, "26M316", "WH", "2T - 3T - 4T", "Hang", "6110"),
@@ -117,6 +121,7 @@ def make_order(path: Path, cases=CASES):
         values = {
             "Division": "G", "Ref#": "NKG-LEM316", "Style": style,
             "Product Description": "KNIT LEGGING", "Label": label,
+            "Label Name": LABEL_NAMES.get(label, ""),
             "Account": "H040M", "PO#": po, "Size Configuration": sizes,
             "Hang/Flat": hang_flat,
         }
@@ -188,7 +193,8 @@ def test_both_mismatch_directions_and_blank_are_reviewed(tmp_path):
     assert audit["review"] == 1
     wb = load_workbook(audit["output_file"])
     review = wb["HANGER REVIEW"]
-    statuses = [review.cell(row, 19).value for row in range(2, 5)]
+    status_column = {c.value: c.column for c in review[1]}["Validation Status"]
+    statuses = [review.cell(row, status_column).value for row in range(2, 5)]
     assert statuses == ["MISMATCH", "MISMATCH", "REVIEW"]
     wb.close()
 
@@ -252,12 +258,14 @@ def test_worker_sanitizes_and_validates_uploaded_workbooks(tmp_path):
     valid_path = tmp_path / "valid.xlsx"
     Workbook().save(valid_path)
     validate_workbook_bytes(Upload("valid.xlsx", valid_path.read_bytes()), "order")
+    # Orders accept Word/PDF as well; anything outside the four formats does not.
+    assert safe_upload_name("orders.pdf", "order") == "orders.pdf"
     try:
-        safe_upload_name("orders.pdf", "order")
+        safe_upload_name("orders.txt", "order")
     except AutomationError as exc:
-        assert "must be an .xls or .xlsx" in str(exc)
+        assert "must be .docx, .pdf, .xls, .xlsx" in str(exc)
     else:
-        raise AssertionError("Worker accepted a non-workbook upload")
+        raise AssertionError("Worker accepted an unsupported upload")
 
 
 def test_worker_parses_n8n_multipart_upload(tmp_path):
@@ -503,6 +511,144 @@ def test_hbe_hanger_code_missing_from_manual_is_rejected(tmp_path):
     assert "does not support hanger_code: 6110" in result["validation_note"]
 
 
+def test_compound_description_resolves_to_its_head_noun():
+    allowed = {"BOTTOMS", "TOPS", "SETS", "COVERALLS", "HOSIERY", "OUTERWEAR"}
+
+    # The component garment is named first, the head noun last.
+    assert infer_category("KNIT SHORT SET", allowed)[0] == "SETS"
+    assert infer_category("FLEECE PANT SET", allowed)[0] == "SETS"
+    assert infer_category("8PK CREW SOCK", allowed)[0] == "HOSIERY"
+    assert infer_category("BABY KNIT ROMPER", allowed)[0] == "COVERALLS"
+    # A plain description still resolves, and an unknown one stays unresolved.
+    assert infer_category("KNIT LEGGING", allowed)[0] == "BOTTOMS"
+    assert infer_category("MYSTERY ITEM", allowed)[0] == ""
+
+
+def test_category_is_restricted_to_allowed_sheets():
+    assert infer_category("8PK CREW SOCK", {"HOSIERY"})[0] == "HOSIERY"
+    # Hosiery is not a top: with HOSIERY disallowed the row stays unresolved
+    # rather than being filed under the nearest available category.
+    assert infer_category("8PK CREW SOCK", {"TOPS", "SETS"})[0] == ""
+
+
+def test_label_name_is_read_and_reported(tmp_path):
+    sof_root = tmp_path / "sof"
+    sof_root.mkdir()
+    make_sof(sof_root)
+    order = tmp_path / "orders.xlsx"
+    make_order(order, [(751419, "26M316", "WH", "2T - 3T - 4T", "Hang", "6110")])
+    rules = Path(__file__).resolve().parents[1] / "rules" / "hanger_rules.json"
+
+    audit = run(order, sof_root, rules, tmp_path / "out")
+
+    entry = audit["row_results"][0]
+    assert entry["label_name"] == "WITH HANGER"
+    wb = load_workbook(Path(audit["result_file"]))
+    ws = wb["KET QUA"]
+    headers = {c.value: c.column for c in ws[1]}
+    assert ws.cell(2, headers["Label Name"]).value == "WITH HANGER"
+    wb.close()
+
+
+def make_split_evidence_sof(root: Path) -> Path:
+    """SOF shaped like the real H040M SETS tab.
+
+    The hanger code sits in a table, the colour is stated in a sentence below it,
+    and an unrelated "N/A" belongs to a size column that carries no hanger.
+    """
+    path = root / "H040M Stock Replenishment SO Form 8.31.26.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "SETS"
+    ws["A21"] = "Hanger Required"
+    ws["B21"] = "Yes"
+    ws["A22"] = "Hanger Type for 2 pc pant sets"
+    ws["B22"] = "496/9508"
+    ws["C22"] = "N/A"
+    ws["A23"] = "Sizers"
+    ws["B23"] = "White size clip / black lettering"
+    ws["B27"] = "Use white plastic hangers on merged size packs, hang the set together."
+    wb.save(path)
+    return path
+
+
+def llm_review_state() -> dict:
+    return {
+        "status": "REVIEW", "validation_note": "No matching rule",
+        "product_category": "", "sof_hang_flat": "", "hanger_code": "",
+        "hanger_color": "", "color_sizer": "", "sticker_hanger": "",
+        "size_sticker_hanger": "", "source_sheet": "", "source_cells": "",
+        "match_method": "", "confidence": 0.0,
+    }
+
+
+def test_no_hanger_color_on_a_hang_decision_is_rejected(tmp_path):
+    sof = make_split_evidence_sof(tmp_path)
+    wb = load_workbook(sof, data_only=True)
+    row = {"Account": "H040M", "Label": "WH", "Hang/Flat": "Hang"}
+    decision = {
+        "status": "MATCHED", "product_category": "SETS", "sof_hang_flat": "Hang",
+        "hanger_code": "496/9508", "hanger_color": "NO",
+        "color_sizer": "White size clip / black lettering",
+        "sticker_hanger": "NO", "size_sticker_hanger": "NO",
+        "source_sheet": "SETS", "source_cells": "A21:C23",
+        "confidence": 0.99, "reasoning": "Colour is not stated in the table.",
+    }
+
+    result = resolve_llm_decision(
+        row, llm_review_state(), decision, {"SETS"}, wb, sof, min_confidence=0.85
+    )
+    wb.close()
+
+    assert result["status"] == "REVIEW"
+    assert "Hang rule must state a real hanger_color" in result["validation_note"]
+    assert result["hanger_color"] == ""
+
+
+def test_unrelated_na_does_not_license_a_no_claim(tmp_path):
+    sof = make_split_evidence_sof(tmp_path)
+    wb = load_workbook(sof, data_only=True)
+    row = {"Account": "H040M", "Label": "WH", "Hang/Flat": "Hang"}
+    decision = {
+        "status": "MATCHED", "product_category": "SETS", "sof_hang_flat": "Hang",
+        "hanger_code": "496/9508", "hanger_color": "WHITE", "color_sizer": "NO",
+        "sticker_hanger": "NO", "size_sticker_hanger": "NO",
+        "source_sheet": "SETS", "source_cells": "A21:C23",
+        "confidence": 0.99, "reasoning": "Borrowing the N/A in C22.",
+    }
+
+    result = resolve_llm_decision(
+        row, llm_review_state(), decision, {"SETS"}, wb, sof, min_confidence=0.85
+    )
+    wb.close()
+
+    assert result["status"] == "REVIEW"
+    assert "does not support color_sizer" in result["validation_note"]
+
+
+def test_a_decision_may_cite_several_ranges(tmp_path):
+    sof = make_split_evidence_sof(tmp_path)
+    wb = load_workbook(sof, data_only=True)
+    row = {"Account": "H040M", "Label": "WH", "Hang/Flat": "Hang"}
+    decision = {
+        "status": "MATCHED", "product_category": "SETS", "sof_hang_flat": "Hang",
+        "hanger_code": "496/9508", "hanger_color": "WHITE",
+        "color_sizer": "White size clip / black lettering",
+        "sticker_hanger": "NO", "size_sticker_hanger": "NO",
+        "source_sheet": "SETS", "source_cells": ["A21:C23", "B27:B27"],
+        "confidence": 0.99, "reasoning": "Table plus the colour sentence below it.",
+    }
+
+    result = resolve_llm_decision(
+        row, llm_review_state(), decision, {"SETS"}, wb, sof, min_confidence=0.85
+    )
+    wb.close()
+
+    assert result["status"] == "MATCHED", result["validation_note"]
+    assert result["hanger_color"] == "WHITE"
+    assert result["source_cells"] == "A21:C23,B27:B27"
+
+
 def test_llm_hallucinated_value_is_rejected(tmp_path):
     sof_root = tmp_path / "sof"
     sof_root.mkdir()
@@ -525,6 +671,63 @@ def test_llm_hallucinated_value_is_rejected(tmp_path):
     assert audit["review"] == 1
     assert "Rejected DeepSeek decision" in audit["row_results"][0]["validation_note"]
     assert "hanger_code" in audit["row_results"][0]["validation_note"]
+
+
+def capture_request_payload(text_mode: bool = False) -> dict:
+    """Build one real API payload without letting it reach the network."""
+    import urllib.request
+
+    classifier = DeepSeekClassifier(DeepSeekSettings(api_keys=("test",)))
+    captured = {}
+
+    def fake_urlopen(request, timeout=None):
+        captured["payload"] = json.loads(request.data.decode("utf-8"))
+        raise RuntimeError("stop before the network")
+
+    groups = {"G0001": {"row_numbers": [3], "row": {
+        "Account": "H040M", "Label": "-V", "Label Name": "ST HANG ALT PACK",
+        "Product Description": "KNIT SHORT SET", "Size Configuration": "12M",
+        "Hang/Flat": "Hang",
+    }}}
+    evidence = "\n[SHEET: SETS]\nA22 = Hanger Type\nB22 = 496/9508\n"
+    original = urllib.request.urlopen
+    urllib.request.urlopen = fake_urlopen
+    try:
+        classifier._request(
+            groups, {"SETS"}, "H040M.xlsx", evidence, "test", text_mode=text_mode
+        )
+    except RuntimeError:
+        pass
+    finally:
+        urllib.request.urlopen = original
+    return captured["payload"]
+
+
+def test_schema_asks_for_the_citation_before_the_values():
+    """Generation is left to right, so the model must cite before it commits."""
+    payload = capture_request_payload()
+    fields = list(json.loads(payload["messages"][1]["content"])
+                  ["output_schema"]["decisions"][0])
+
+    assert fields.index("reasoning") < fields.index("hanger_code")
+    assert fields.index("source_cells") < fields.index("hanger_code")
+    assert fields.index("hanger_code") < fields.index("status")
+
+
+def test_text_mode_swaps_the_citation_fields_but_keeps_the_order():
+    payload = capture_request_payload(text_mode=True)
+    fields = list(json.loads(payload["messages"][1]["content"])
+                  ["output_schema"]["decisions"][0])
+
+    assert "source_cells" not in fields and "source_sheet" not in fields
+    assert fields.index("source_quote") < fields.index("hanger_code")
+
+
+def test_label_name_is_sent_to_the_model():
+    payload = capture_request_payload()
+    group = json.loads(payload["messages"][1]["content"])["order_groups"][0]
+
+    assert group["label_name"] == "ST HANG ALT PACK"
 
 
 def test_deepseek_groups_duplicate_order_patterns_before_api_call(tmp_path):
@@ -567,7 +770,7 @@ def test_unique_pending_sheet_is_preferred_over_completed_history(tmp_path):
     completed.append(HEADERS)
     completed.append(["" for _ in HEADERS])
     pending = wb.create_sheet("Pending")
-    pending_headers = HEADERS[:15]
+    pending_headers = HEADERS[:HEADERS.index("Hanger code")]
     pending.append(pending_headers)
     values = {
         "Division": "G", "Ref#": "NKG-LEM316", "Style": "26M316",
@@ -786,17 +989,17 @@ def test_result_sheet_has_tong_hop_columns_and_header_colours(tmp_path):
     headers = [c.value for c in ws[1]]
     assert headers == [
         "Division", "Season", "Year", "Ref#", "Style", "Product Description",
-        "Color", "Label", "Account", "PO#", "PO Qty", "Size Configuration",
-        "Pack Ratio", "Master Box Quantity", "Hang/Flat",
+        "Color", "Label", "Label Name", "Account", "PO#", "PO Qty",
+        "Size Configuration", "Pack Ratio", "Master Box Quantity", "Hang/Flat",
         "Hanger code", "Hanger color", "Color Sizer", "Sticker hanger",
         "SIZE Sticker hanger", "NCC",
         "Status", "Validation Note", "Match Method", "Confidence",
-        "SOF File", "SOF Sheet", "SOF Cells",
+        "SOF File", "SOF Sheet", "SOF Cells", "SOF Section", "SOF Lines", "SOF Excerpt",
     ]
     for cell in ws[1]:
-        if cell.column <= 15:
+        if cell.column <= 16:
             expected = "33CCCC"
-        elif cell.column <= 21:
+        elif cell.column <= 22:
             expected = "FFFF00"
         else:
             expected = "D9D9D9"

@@ -29,16 +29,18 @@ from openpyxl.utils import get_column_letter, range_boundaries
 
 ORDER_FIELDS = [
     "Division", "Season", "Year", "Ref#", "Style", "Product Description",
-    "Color", "Label", "Account", "PO#", "PO Qty", "Size Configuration",
-    "Pack Ratio", "Master Box Quantity", "Hang/Flat", "Hanger code",
-    "Hanger color", "Color Sizer", "Sticker hanger", "SIZE Sticker hanger",
+    "Color", "Label", "Label Name", "Account", "PO#", "PO Qty",
+    "Size Configuration", "Pack Ratio", "Master Box Quantity", "Hang/Flat",
+    "Hanger code", "Hanger color", "Color Sizer", "Sticker hanger",
+    "SIZE Sticker hanger",
 ]
 
 ALIASES = {
     "division": "Division", "season": "Season", "year": "Year",
     "ref#": "Ref#", "ref": "Ref#", "ref number": "Ref#",
     "style": "Style", "product description": "Product Description",
-    "color": "Color", "label": "Label", "account": "Account",
+    "color": "Color", "label": "Label", "label name": "Label Name",
+    "account": "Account",
     "po#": "PO#", "po": "PO#", "po number": "PO#", "po qty": "PO Qty",
     "size configuration": "Size Configuration", "pack ratio": "Pack Ratio",
     "master box quantity": "Master Box Quantity", "hang/flat": "Hang/Flat",
@@ -76,8 +78,8 @@ ORDER_HEADER_FILL = "33CCCC"
 # can be pasted straight in: order columns first, then the SOF block.
 RESULT_ORDER_COLUMNS = [
     "Division", "Season", "Year", "Ref#", "Style", "Product Description",
-    "Color", "Label", "Account", "PO#", "PO Qty", "Size Configuration",
-    "Pack Ratio", "Master Box Quantity", "Hang/Flat",
+    "Color", "Label", "Label Name", "Account", "PO#", "PO Qty",
+    "Size Configuration", "Pack Ratio", "Master Box Quantity", "Hang/Flat",
 ]
 # NCC is filled in by hand: it names the supplier and appears nowhere in the SOF,
 # so the column is created and coloured but deliberately left empty.
@@ -104,11 +106,14 @@ RESULT_AUDIT_COLUMNS = [
     ("SOF File", "source_file"),
     ("SOF Sheet", "source_sheet"),
     ("SOF Cells", "source_cells"),
+    ("SOF Section", "source_section"),
+    ("SOF Lines", "source_lines"),
+    ("SOF Excerpt", "source_excerpt"),
 ]
 
 REVIEW_HEADERS = [
     "Order Sheet", "Order Row", "PO#", "Account", "Division", "Label",
-    "Ref#", "Style", "Product Description", "Product Category",
+    "Label Name", "Ref#", "Style", "Product Description", "Product Category",
     "Size Configuration", "Order Hang/Flat", "SOF Hang/Flat",
     "Hanger code", "Hanger color", "Color Sizer", "Sticker hanger",
     "SIZE Sticker hanger", "Validation Status", "Validation Note",
@@ -119,6 +124,15 @@ VALID_HANG_FLAT = {"Hang", "Flat"}
 SOURCE_RANGE_RE = re.compile(
     r"^(?:\$?[A-Z]{1,3}\$?[1-9]\d*)(?::(?:\$?[A-Z]{1,3}\$?[1-9]\d*))?$"
 )
+
+# A SOF states the hanger code in a table but the hanger colour in a sentence
+# below it, so a decision may cite several ranges. The cap keeps a citation
+# reviewable by hand instead of letting a whole sheet be quoted as "evidence".
+MAX_SOURCE_RANGES = 3
+
+# Value reserved for the LLM to say a field is absent from the SOF. It is never
+# written to a workbook: it forces the row to REVIEW.
+NOT_STATED = "NOT_STATED"
 
 
 class AutomationError(RuntimeError):
@@ -264,7 +278,7 @@ def find_sof(sof_root: Path, account: str) -> SofSelection:
     needle = account.casefold()
     matches = sorted(
         (p for p in sof_root.rglob("*") if p.is_file()
-         and p.suffix.casefold() in {".xls", ".xlsx"}
+         and p.suffix.casefold() in {".xls", ".xlsx", ".docx", ".pdf"}
          and needle in p.name.casefold()),
         key=lambda p: str(p).casefold(),
     )
@@ -400,39 +414,94 @@ def rule_matches(rule: dict[str, Any], row: dict[str, str]) -> bool:
     return True
 
 
+CATEGORY_TERMS = [
+    ("BOTTOMS", ("legging", "pant", "short", "skirt", "skort", "jogger", "boardshort")),
+    # "crew" is deliberately absent: it names both a crew-neck top and a crew
+    # sock, so it misfiles hosiery as a top wherever HOSIERY is not allowed.
+    ("TOPS", ("shirt", "top", "tee", "polo", "blouse", "hoody", "hoodie", "sweatshirt")),
+    ("SETS", ("set", "2pc", "2 pc", "3pc", "3 pc", "two piece", "multi-piece")),
+    ("COVERALLS", ("coverall", "romper")),
+    ("BODYSUITS", ("bodysuit",)),
+    ("DRESSES", ("dress",)),
+    ("OUTERWEAR", ("jacket", "coat", "vest", "outerwear")),
+    ("HOSIERY", ("sock", "hosiery", "bib", "blanket")),
+    ("UNDERWEAR", ("underwear", "brief", "boxer")),
+    ("COLD WEATHER", ("beanie", "glove", "mitten", "scarf", "hat", "cap")),
+    ("BAGS", ("bag", "backpack")),
+    ("GIRLS SWIMWEAR", ("swim", "bikini", "swimsuit")),
+]
+
+
 def infer_category(description: str, allowed: set[str]) -> tuple[str, str]:
-    """Conservative deterministic classification; unresolved text stays unresolved."""
+    """Conservative deterministic classification; unresolved text stays unresolved.
+
+    The head of an English compound noun is its last word, so "KNIT SHORT SET"
+    is a set rather than a bottom. Scoring by mere presence instead deadlocked on
+    every multi-piece description, which is most of a children's apparel order.
+    """
     text = key(description)
-    groups = [
-        ("BOTTOMS", ("legging", "pant", "short", "skirt", "skort", "jogger")),
-        ("TOPS", ("shirt", "top", "tee", "polo", "blouse")),
-        ("SETS", ("set", "2pc", "2 pc", "two piece", "multi-piece")),
-        ("COVERALLS", ("coverall",)), ("BODYSUITS", ("bodysuit",)),
-        ("DRESSES", ("dress",)), ("OUTERWEAR", ("jacket", "coat", "vest")),
-    ]
-    found = [category for category, words in groups if category in allowed and any(word in text for word in words)]
-    if len(found) == 1:
-        return found[0], f"Classified from Product Description: {description}"
+    matches = []
+    for category, words in CATEGORY_TERMS:
+        if category not in allowed:
+            continue
+        head = max((text.rfind(word) for word in words if word in text), default=-1)
+        if head >= 0:
+            matches.append((head, category))
+    if matches:
+        last = max(position for position, _ in matches)
+        winners = [category for position, category in matches if position == last]
+        if len(winners) == 1:
+            return winners[0], f"Classified from Product Description: {description}"
     return "", f"Product category is unresolved from Product Description: {description or '[blank]'}"
+
+
+def parse_source_ranges(value: Any) -> list[str]:
+    """Normalize one or several A1 ranges into an ordered, deduplicated list.
+
+    Accepts a list, or a string holding comma-separated ranges. Returns an empty
+    list when any part is not a well-formed range, so a malformed citation can
+    never be read as a narrower valid one.
+    """
+    parts = (
+        [clean(item).upper() for item in value]
+        if isinstance(value, (list, tuple))
+        else [part.strip() for part in clean(value).upper().split(",")]
+    )
+    ranges: list[str] = []
+    for part in parts:
+        if not part:
+            continue
+        if not SOURCE_RANGE_RE.fullmatch(part):
+            return []
+        if part not in ranges:
+            ranges.append(part)
+    return ranges
 
 
 def validate_source(sof_wb, source: dict[str, Any]) -> tuple[bool, str]:
     sheet = clean(source.get("sheet"))
-    cells = clean(source.get("cells")).upper()
+    raw_cells = source.get("cells")
+    ranges = parse_source_ranges(raw_cells)
     if not sheet or sheet not in sof_wb.sheetnames:
         return False, f"Source sheet is missing or does not exist: {sheet or '[blank]'}"
-    if not SOURCE_RANGE_RE.fullmatch(cells):
-        return False, f"Source cell range is invalid: {cells or '[blank]'}"
-    try:
-        min_col, min_row, max_col, max_row = range_boundaries(cells.replace("$", ""))
-    except ValueError:
-        return False, f"Source cell range is invalid: {cells}"
+    if not ranges:
+        return False, f"Source cell range is invalid: {clean(raw_cells) or '[blank]'}"
+    if len(ranges) > MAX_SOURCE_RANGES:
+        return False, (
+            f"At most {MAX_SOURCE_RANGES} source ranges may be cited, got {len(ranges)}: "
+            + ", ".join(ranges)
+        )
     ws = sof_wb[sheet]
-    if max_row > ws.max_row or max_col > ws.max_column:
-        return False, f"Source range {sheet}!{cells} lies outside the used worksheet"
-    if not any(clean(ws.cell(r, c).value) for r in range(min_row, max_row + 1)
-               for c in range(min_col, max_col + 1)):
-        return False, f"Source range {sheet}!{cells} contains no evidence"
+    for cells in ranges:
+        try:
+            min_col, min_row, max_col, max_row = range_boundaries(cells.replace("$", ""))
+        except ValueError:
+            return False, f"Source cell range is invalid: {cells}"
+        if max_row > ws.max_row or max_col > ws.max_column:
+            return False, f"Source range {sheet}!{cells} lies outside the used worksheet"
+        if not any(clean(ws.cell(r, c).value) for r in range(min_row, max_row + 1)
+                   for c in range(min_col, max_col + 1)):
+            return False, f"Source range {sheet}!{cells} contains no evidence"
     return True, ""
 
 
@@ -445,14 +514,24 @@ def validate_rule_result(rule: dict[str, Any], allowed: set[str]) -> tuple[bool,
     missing = [name for name in required if not clean(result.get(name))]
     if missing:
         return False, "Required SOF data is blank: " + ", ".join(missing)
+    not_stated = [name for name in required if key(result.get(name)) == key(NOT_STATED)]
+    if not_stated:
+        return False, "SOF does not state: " + ", ".join(not_stated)
     if clean(result["product_category"]).upper() not in allowed:
         return False, f"Product category is not allowed: {result['product_category']}"
-    if normalize_hang_flat(result["sof_hang_flat"]) not in VALID_HANG_FLAT:
+    hang_flat = normalize_hang_flat(result["sof_hang_flat"])
+    if hang_flat not in VALID_HANG_FLAT:
         return False, f"SOF Hang/Flat is invalid: {result['sof_hang_flat']}"
-    if normalize_hang_flat(result["sof_hang_flat"]) == "Flat":
+    if hang_flat == "Flat":
         for name in ("hanger_code", "hanger_color", "color_sizer", "sticker_hanger", "size_sticker_hanger"):
             if key(result[name]) != "no":
                 return False, f"Flat rule must set {name} to NO"
+    # A hung garment always hangs on a physical hanger, so a blank-equivalent
+    # code or colour means the value was not found, not that none is required.
+    if hang_flat == "Hang":
+        for name in ("hanger_code", "hanger_color"):
+            if key(result[name]) == "no":
+                return False, f"Hang rule must state a real {name}, not NO"
     return True, ""
 
 
@@ -479,7 +558,8 @@ def resolve_row(row: dict[str, str], rules: list[dict[str, Any]], allowed: set[s
         "sof_hang_flat": "",
         "hanger_code": "", "hanger_color": "", "color_sizer": "",
         "sticker_hanger": "", "size_sticker_hanger": "",
-        "source_sheet": "", "source_cells": "", "match_method": "",
+        "source_sheet": "", "source_cells": "", "source_section": "",
+        "source_lines": "", "source_excerpt": "", "match_method": "",
         "confidence": 0.0, "status": "REVIEW", "validation_note": "",
     }
     if not candidates:
@@ -529,26 +609,104 @@ def resolve_row(row: dict[str, str], rules: list[dict[str, Any]], allowed: set[s
     return base
 
 
-def cited_source_text(sof_wb, sheet: str, cells: str) -> str:
-    """Return normalized text from a previously validated SOF citation."""
-    min_col, min_row, max_col, max_row = range_boundaries(cells.replace("$", ""))
+def unresolved_text_row(row: dict[str, str], allowed: set[str]) -> dict[str, Any]:
+    category, note = infer_category(row.get("Product Description", ""), allowed)
+    return {
+        "product_category": category, "sof_hang_flat": "",
+        "hanger_code": "", "hanger_color": "", "color_sizer": "",
+        "sticker_hanger": "", "size_sticker_hanger": "",
+        "source_sheet": "", "source_cells": "", "source_section": "",
+        "source_lines": "", "source_excerpt": "", "match_method": "",
+        "confidence": 0.0, "status": "REVIEW",
+        "validation_note": f"Text SOF requires DeepSeek verification; {note}",
+    }
+
+
+def unmatched_document_row(row: dict[str, str], allowed: set[str], order_format: str,
+                           missing: list[str]) -> dict[str, Any]:
+    """Report a Word/PDF order row that carries no account.
+
+    An Excel order row without an account belongs to a run whose SOF simply was
+    not uploaded, so it is out of scope. A Word/PDF purchase order is the whole
+    upload, so the same row is not out of scope: the document did not state the
+    account. It is reviewed, with the columns the document lacks named, rather
+    than skipped silently or guessed.
+    """
+    category, note = infer_category(row.get("Product Description", ""), allowed)
+    lacking = ", ".join(missing) if missing else "Account"
+    return {
+        "product_category": category, "sof_hang_flat": "",
+        "hanger_code": "", "hanger_color": "", "color_sizer": "",
+        "sticker_hanger": "", "size_sticker_hanger": "",
+        "source_sheet": "", "source_cells": "", "source_section": "",
+        "source_lines": "", "source_excerpt": "", "match_method": "",
+        "confidence": 0.0, "status": "REVIEW",
+        "validation_note": (
+            f"The {order_format.upper()} order states no Account, so no SOF could be selected. "
+            f"Columns the document does not carry: {lacking}. {note}"
+        ),
+    }
+
+
+def cited_source_values(sof_wb, sheet: str, cells: Any) -> list[str]:
+    """Return each non-empty cell of a validated citation as its own statement."""
     ws = sof_wb[sheet]
-    return " ".join(
-        clean(ws.cell(row, col).value)
-        for row in range(min_row, max_row + 1)
-        for col in range(min_col, max_col + 1)
-        if clean(ws.cell(row, col).value)
-    )
+    values: list[str] = []
+    for rng in parse_source_ranges(cells):
+        min_col, min_row, max_col, max_row = range_boundaries(rng.replace("$", ""))
+        values.extend(
+            clean(ws.cell(row, col).value)
+            for row in range(min_row, max_row + 1)
+            for col in range(min_col, max_col + 1)
+            if clean(ws.cell(row, col).value)
+        )
+    return values
 
 
-def claim_is_supported(claim: str, evidence: str) -> bool:
+def cited_source_text(sof_wb, sheet: str, cells: Any) -> str:
+    """Return normalized text from a previously validated SOF citation."""
+    return " ".join(cited_source_values(sof_wb, sheet, cells))
+
+
+# Words that name each output field in SOF prose. A "NO" claim has to be denied
+# next to its own field's wording: scanning the whole cited range instead let an
+# unrelated "N/A" in a neighbouring table license a blank value for any field.
+# "size sticker" is kept apart from "sticker": a brand-sticker instruction says
+# nothing about which size sticker to use, and treating them as one term let any
+# brand-sticker paragraph veto a legitimate NO.
+FIELD_EVIDENCE_TERMS = {
+    "hanger_code": ("hanger",),
+    "hanger_color": ("hanger",),
+    "color_sizer": ("sizer", "size clip", "crown"),
+    "sticker_hanger": ("sticker",),
+    "size_sticker_hanger": ("size sticker",),
+}
+NEGATION_RE = re.compile(r"(?<![a-z0-9])(?:no|n/a|none|not required|without)(?![a-z0-9])")
+
+
+def no_claim_is_supported(field: str, statements: list[str]) -> bool:
+    """Decide whether "NO" is evidence of absence for one field.
+
+    A SOF names an accessory only where it is required, so silence about one is
+    absence. Once a cell does discuss it, only a denial inside that same cell
+    means NO. The test is per cell because the cited range is flattened for the
+    other checks, and across a flattened join an unrelated "N/A" from one table
+    row lands next to another row's wording.
+    """
+    terms = FIELD_EVIDENCE_TERMS.get(field, ())
+    mentions = [key(item) for item in statements if any(term in key(item) for term in terms)]
+    if not mentions:
+        return True
+    return any(NEGATION_RE.search(text) for text in mentions)
+
+
+def claim_is_supported(claim: str, statements: list[str], field: str) -> bool:
     normalized_claim = key(claim)
-    normalized_evidence = key(evidence)
+    normalized_evidence = key(" ".join(statements))
     if normalized_claim == "no":
-        return normalized_evidence == "no" or any(marker in normalized_evidence for marker in (
-            " no ", "no hanger", "hanger required no", "not required", "n/a",
-            "flat pack", "flatpacked",
-        )) or normalized_evidence.startswith("no ") or normalized_evidence.endswith(" no")
+        if normalized_evidence == "no":
+            return True
+        return no_claim_is_supported(field, statements)
     if not normalized_claim:
         return False
     if normalized_claim in normalized_evidence:
@@ -578,7 +736,7 @@ def validate_llm_evidence(
 ) -> tuple[bool, str]:
     source = {
         "sheet": clean(decision.get("source_sheet")),
-        "cells": clean(decision.get("source_cells")).upper(),
+        "cells": decision.get("source_cells"),
     }
     valid, note = validate_source(sof_wb, source)
     if not valid:
@@ -589,7 +747,8 @@ def validate_llm_evidence(
             f"Cited sheet '{source['sheet']}' holds general packing rules, not a "
             f"per-category hanger specification"
         )
-    evidence = cited_source_text(sof_wb, source["sheet"], source["cells"])
+    statements = cited_source_values(sof_wb, source["sheet"], source["cells"])
+    evidence = " ".join(statements)
     if source_sheet == "PACKAGING":
         label = clean(row.get("Label"))
         if not label:
@@ -609,12 +768,65 @@ def validate_llm_evidence(
         marker in evidence_key for marker in ("flat", "no hanger", "hanger required no", "not required")
     ):
         return False, "Cited SOF range does not support a Flat requirement"
+    # A Flat requirement denies every hanger field at once, and the evidence for
+    # it was just checked, so the per-field denials need no separate citation.
+    if sof_hf == "Flat":
+        return True, ""
     for field in (
         "hanger_code", "hanger_color", "color_sizer", "sticker_hanger", "size_sticker_hanger",
     ):
         claim = clean(decision.get(field))
-        if not claim_is_supported(claim, evidence):
+        if not claim_is_supported(claim, statements, field):
             return False, f"Cited SOF range does not support {field}: {claim or '[blank]'}"
+    return True, ""
+
+
+def validate_text_llm_evidence(
+    sof_text, decision: dict[str, Any], row: dict[str, str]
+) -> tuple[bool, str]:
+    section = clean(decision.get("source_section"))
+    lines = clean(decision.get("source_lines")).upper()
+    quote = clean(decision.get("source_quote"))
+    try:
+        evidence = sof_text.cited_text(section, lines)
+    except AutomationError as exc:
+        return False, str(exc)
+    if not quote or len(quote) > 500 or key(quote) not in key(evidence):
+        return False, "Cited quote is missing or does not occur in the cited SOF lines"
+    label = clean(row.get("Label"))
+    if label and not identifier_is_cited(label, evidence):
+        return False, f"Cited SOF lines do not contain order Label {label}"
+    evidence_key = key(evidence)
+    category_terms = {
+        "BOTTOMS": ("bottoms", "legging", "pant", "short", "skirt", "jogger"),
+        "TOPS": ("tops", "shirt", "tee", "polo", "blouse"),
+        "SETS": ("sets", "set", "2pc", "3pc"),
+        "DRESSES": ("dresses", "dress"),
+        "OUTERWEAR": ("outerwear", "jacket", "coat", "vest"),
+        "HOSIERY": ("hosiery", "sock", "bib"),
+    }
+    category = clean(decision.get("product_category")).upper()
+    terms = category_terms.get(category, (category.casefold(),))
+    if not any(re.search(rf"\b{re.escape(term)}\w*\b", evidence_key) for term in terms):
+        return False, f"Cited SOF lines do not support product category {category}"
+    sof_hf = normalize_hang_flat(decision.get("sof_hang_flat"))
+    # HANGTAG is not garment HANGER evidence.
+    if sof_hf == "Hang" and not re.search(r"\b(?:hanger|hangers|hanging|hang)\b", evidence_key):
+        return False, "Cited SOF lines do not support a garment Hang requirement"
+    if sof_hf == "Flat" and not any(
+        marker in evidence_key for marker in ("flat", "no hanger", "hanger required no")
+    ):
+        return False, "Cited SOF lines do not support a Flat requirement"
+    if sof_hf == "Flat":
+        return True, ""
+    for field in (
+        "hanger_code", "hanger_color", "color_sizer", "sticker_hanger", "size_sticker_hanger",
+    ):
+        claim = clean(decision.get(field))
+        if field == "hanger_code" and key(claim) != "no" and not identifier_is_cited(claim, evidence):
+            return False, f"Cited SOF lines do not contain exact hanger_code {claim}"
+        if not claim_is_supported(claim, evidence.splitlines(), field):
+            return False, f"Cited SOF lines do not support {field}: {claim or '[blank]'}"
     return True, ""
 
 
@@ -649,6 +861,9 @@ def resolve_llm_decision(
         )
         base["validation_note"] = "; ".join(filter(None, (original_note, llm_note)))
         return base
+    from text_sof import TextSof
+
+    text_sof = isinstance(sof_wb, TextSof)
     candidate_rule = {
         "result": {
             "product_category": clean(decision.get("product_category")).upper(),
@@ -661,12 +876,15 @@ def resolve_llm_decision(
         },
         "source": {
             "sheet": clean(decision.get("source_sheet")),
-            "cells": clean(decision.get("source_cells")).upper(),
+            "cells": ",".join(parse_source_ranges(decision.get("source_cells"))),
         },
     }
     valid, note = validate_rule_result(candidate_rule, allowed)
     if valid:
-        valid, note = validate_llm_evidence(sof_wb, decision, row)
+        valid, note = (
+            validate_text_llm_evidence(sof_wb, decision, row) if text_sof
+            else validate_llm_evidence(sof_wb, decision, row)
+        )
     if not valid:
         base["validation_note"] = "; ".join(filter(None, (
             original_note, f"Rejected DeepSeek decision: {note}"
@@ -685,13 +903,19 @@ def resolve_llm_decision(
         "color_sizer": result["color_sizer"],
         "sticker_hanger": result["sticker_hanger"],
         "size_sticker_hanger": result["size_sticker_hanger"],
-        "source_sheet": source["sheet"],
-        "source_cells": source["cells"],
+        "source_sheet": "" if text_sof else source["sheet"],
+        "source_cells": "" if text_sof else source["cells"],
+        "source_section": clean(decision.get("source_section")) if text_sof else "",
+        "source_lines": clean(decision.get("source_lines")).upper() if text_sof else "",
+        "source_excerpt": clean(decision.get("source_quote")) if text_sof else "",
         "match_method": "LLM_DEEPSEEK_VERIFIED_SOURCE",
         "confidence": confidence,
         "validation_note": "",
     })
-    citation = f"{selected_sof.name} | {source['sheet']}!{source['cells']}"
+    citation = (
+        f"{selected_sof.name} | {base['source_section']} {base['source_lines']}"
+        if text_sof else f"{selected_sof.name} | {source['sheet']}!{source['cells']}"
+    )
     if order_hf is None:
         base["status"] = "REVIEW"
         base["validation_note"] = f"Missing or unrecognized order Hang/Flat value. Source: {citation}."
@@ -699,7 +923,7 @@ def resolve_llm_decision(
         base["status"] = "MISMATCH"
         base["validation_note"] = (
             f"MISMATCH: Order states {order_hf}, but SOF {row.get('Account')} requires {sof_hf}. "
-            f"Source: {source['sheet']}!{source['cells']}."
+            f"Source: {citation}."
         )
     else:
         base["status"] = "MATCHED"
@@ -738,9 +962,12 @@ def append_review(ws, order_sheet: str, row_number: int, row: dict[str, str], re
     source = ""
     if result.get("source_sheet") and result.get("source_cells"):
         source = f"{sof_name} | {result['source_sheet']}!{result['source_cells']}"
+    elif result.get("source_section") and result.get("source_lines"):
+        source = f"{sof_name} | {result['source_section']} {result['source_lines']}"
     values = [
         order_sheet, row_number, row.get("PO#"), row.get("Account"), row.get("Division"),
-        row.get("Label"), row.get("Ref#"), row.get("Style"), row.get("Product Description"),
+        row.get("Label"), row.get("Label Name"), row.get("Ref#"), row.get("Style"),
+        row.get("Product Description"),
         result.get("product_category"), row.get("Size Configuration"), row.get("Hang/Flat"),
         result.get("sof_hang_flat"), result.get("hanger_code"), result.get("hanger_color"),
         result.get("color_sizer"), result.get("sticker_hanger"), result.get("size_sticker_hanger"),
@@ -760,6 +987,7 @@ def audit_row_result(row_number: int, row: dict[str, str], result: dict[str, Any
         "account": row.get("Account", ""),
         "division": row.get("Division", ""),
         "label": row.get("Label", ""),
+        "label_name": row.get("Label Name", ""),
         "ref_number": row.get("Ref#", ""),
         "style": row.get("Style", ""),
         "product_description": row.get("Product Description", ""),
@@ -775,6 +1003,9 @@ def audit_row_result(row_number: int, row: dict[str, str], result: dict[str, Any
         "source_file": source_file,
         "source_sheet": result.get("source_sheet", ""),
         "source_cells": result.get("source_cells", ""),
+        "source_section": result.get("source_section", ""),
+        "source_lines": result.get("source_lines", ""),
+        "source_excerpt": result.get("source_excerpt", ""),
         "match_method": result.get("match_method", ""),
         "confidence": result.get("confidence", 0.0),
         "status": result.get("status", "REVIEW"),
@@ -867,8 +1098,9 @@ def run(input_path: Path, sof_root: Path, rules_path: Path, output_dir: Path,
     started = now or datetime.now()
     if not input_path.exists():
         raise AutomationError(f"Input file does not exist: {input_path}")
-    if input_path.suffix.casefold() not in {".xls", ".xlsx"}:
-        raise AutomationError("Input file must be .xls or .xlsx")
+    order_format = input_path.suffix.casefold().lstrip(".")
+    if order_format not in {"xls", "xlsx", "docx", "pdf"}:
+        raise AutomationError("Input file must be .xls, .xlsx, .docx or .pdf")
     account_rules, allowed = read_rules(rules_path)
     audit: dict[str, Any] = {
         "input_file": str(input_path),
@@ -878,11 +1110,25 @@ def run(input_path: Path, sof_root: Path, rules_path: Path, output_dir: Path,
         "result_file": "", "result_file_name": "", "errors": [],
         "row_results": [], "skipped_rows": [], "skipped_no_sof": 0,
         "accounts_checked": [], "accounts_skipped": [],
+        "order_source": {"format": order_format},
         "llm": {"enabled": llm_classifier is not None},
     }
     with tempfile.TemporaryDirectory(prefix="hanger_automation_") as temp_name:
         temp_dir = Path(temp_name)
-        wb, _ = load_editable_workbook(input_path, temp_dir)
+        text_order = None
+        if order_format in {"docx", "pdf"}:
+            from text_order import load_text_order
+
+            text_order = load_text_order(input_path, temp_dir)
+            audit["order_source"] = {
+                "format": text_order.format,
+                "extracted_rows": text_order.row_count,
+                "fields_found": list(text_order.fields),
+                "fields_missing": list(text_order.missing_fields),
+                "document_fields": dict(text_order.document_fields),
+                "notes": list(text_order.notes),
+            }
+        wb, _ = load_editable_workbook(text_order.path if text_order else input_path, temp_dir)
         ws, header_row, columns = select_order_sheet(wb, order_sheet, header_scan_rows)
         columns = ensure_columns(ws, header_row, columns)
         review_ws = prepare_review_sheet(wb)
@@ -913,7 +1159,12 @@ def run(input_path: Path, sof_root: Path, rules_path: Path, output_dir: Path,
                 "candidates": list(selection.candidates),
             }
             if selection.path:
-                sof_workbooks[account] = load_sof_workbook(selection.path, temp_dir)
+                if selection.path.suffix.casefold() in {".pdf", ".docx"}:
+                    from text_sof import load_text_sof
+
+                    sof_workbooks[account] = load_text_sof(selection.path)
+                else:
+                    sof_workbooks[account] = load_sof_workbook(selection.path, temp_dir)
         processed: list[dict[str, Any]] = []
         for row_number, values in rows:
             account = values["Account"].upper()
@@ -925,6 +1176,15 @@ def run(input_path: Path, sof_root: Path, rules_path: Path, output_dir: Path,
                     "row_number": row_number, "po_number": values.get("PO#", ""),
                     "account": values.get("Account", ""),
                     "reason": "Existing hanger data was preserved",
+                })
+                continue
+            if text_order is not None and not values["Account"]:
+                processed.append({
+                    "row_number": row_number, "values": values, "account": "",
+                    "selection": selection,
+                    "result": unmatched_document_row(
+                        values, allowed, text_order.format, list(text_order.missing_fields)
+                    ),
                 })
                 continue
             if not selection or selection.status != "MATCHED" or not selection.path:
@@ -939,7 +1199,13 @@ def run(input_path: Path, sof_root: Path, rules_path: Path, output_dir: Path,
                 })
                 continue
             rules = account_rules.get(account, [])
-            result = resolve_row(values, rules, allowed, sof_workbooks[account], selection.path)
+            from text_sof import TextSof
+
+            result = (
+                unresolved_text_row(values, allowed)
+                if isinstance(sof_workbooks[account], TextSof)
+                else resolve_row(values, rules, allowed, sof_workbooks[account], selection.path)
+            )
             processed.append({
                 "row_number": row_number,
                 "values": values,
@@ -1007,7 +1273,8 @@ def run(input_path: Path, sof_root: Path, rules_path: Path, output_dir: Path,
             f"A1:{get_column_letter(len(REVIEW_HEADERS))}{max(1, review_ws.max_row)}"
         )
         for sof_wb in sof_workbooks.values():
-            sof_wb.close()
+            if hasattr(sof_wb, "close"):
+                sof_wb.close()
         output_path = output_path_for(input_path, output_dir, started)
         try:
             atomic_save(wb, output_path)
