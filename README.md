@@ -122,7 +122,8 @@ DeepSeek nhận các nhóm dòng đơn hàng đã bỏ PO và số lượng, cù
 địa chỉ ô từ những sheet SOF Excel liên quan; với Word/PDF, DeepSeek chỉ nhận
 chữ được trích xuất theo section và số dòng. Các dòng trùng điều kiện chỉ tạo một yêu
 cầu phân loại. Mặc định mỗi lần chạy tối đa 20 API calls, batch 12 nhóm/call và
-chỉ nhận kết quả có confidence từ 0.85. Có thể chỉnh các biến tương ứng trong
+chỉ nhận kết quả có confidence từ 0.65. Đây là ngưỡng đã hiệu chuẩn trên dữ liệu
+thực tế; thấp hơn 0.60 bắt đầu tăng lỗi rõ rệt. Có thể chỉnh các biến tương ứng trong
 `.env`; API key chỉ được truyền vào container `hanger-worker`.
 
 Ngoài các SOF có sheet theo nhóm sản phẩm như `TOPS`, `BOTTOMS`, `SETS`, worker

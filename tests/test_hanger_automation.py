@@ -910,6 +910,39 @@ def test_api_keys_parsed_from_comma_list_and_numbered_slots(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY_3", "key-two")  # duplicate is dropped
     settings = DeepSeekSettings.from_env()
     assert settings.api_keys == ("key-one", "key-two", "key-three")
+    assert settings.min_confidence == 0.65
+
+
+def test_deepseek_http_402_is_not_retried(monkeypatch):
+    import urllib.error
+    import urllib.request
+
+    attempts = 0
+
+    def no_credit(request, timeout=None):
+        nonlocal attempts
+        attempts += 1
+        raise urllib.error.HTTPError(
+            request.full_url, 402, "Payment Required", {}, None
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", no_credit)
+    classifier = DeepSeekClassifier(
+        DeepSeekSettings(api_keys=("test",), max_calls=5)
+    )
+    groups = {"G0001": {"row_numbers": [2], "row": {
+        "Account": "H040M", "Label": "WH", "Product Description": "TEE",
+    }}}
+
+    try:
+        classifier._request(groups, {"TOPS"}, "H040M.xlsx", "", "test")
+    except RuntimeError as exc:
+        assert str(exc) == "DeepSeek HTTP 402"
+    else:
+        raise AssertionError("HTTP 402 should fail the batch")
+
+    assert attempts == 1
+    assert classifier.calls == 1
 
 
 def test_sof_sourced_columns_get_yellow_header(tmp_path):

@@ -54,7 +54,7 @@ class DeepSeekSettings:
     batch_size: int = 12
     max_calls: int = 20
     max_evidence_chars: int = 45_000
-    min_confidence: float = 0.85
+    min_confidence: float = 0.65
     concurrency: int = 8
 
     @classmethod
@@ -77,7 +77,7 @@ class DeepSeekSettings:
             batch_size=_positive_int("HANGER_LLM_BATCH_SIZE", 12, 1, 30),
             max_calls=_positive_int("HANGER_LLM_MAX_CALLS", 20, 1, 200),
             max_evidence_chars=_positive_int("HANGER_LLM_MAX_EVIDENCE_CHARS", 45_000, 5_000, 150_000),
-            min_confidence=_probability("HANGER_LLM_MIN_CONFIDENCE", 0.85),
+            min_confidence=_probability("HANGER_LLM_MIN_CONFIDENCE", 0.65),
             concurrency=_positive_int("HANGER_LLM_CONCURRENCY", 8, 1, 32),
         )
 
@@ -103,7 +103,7 @@ def _api_keys_from_env() -> tuple[str, ...]:
 
 # Bumped whenever the prompt or the decision schema changes, so stale answers
 # from an older prompt can never be served out of the cache.
-PROMPT_VERSION = "v7"
+PROMPT_VERSION = "v8"
 
 
 class DecisionCache:
@@ -362,6 +362,19 @@ FLAT_BLOCK = (
     "FLATPACKED in a FLATPACKED/HANGER column means Flat, with all five hanger fields NO. "
     "A conditional row supports Hang only when its stated product or size condition applies to "
     "this order group."
+)
+
+SIZE_COLUMN_BLOCK = (
+    "SIZE COLUMNS\n"
+    "A per-category table runs smallest to largest across its columns, for example Newborn / "
+    "Infant / Toddler / 4-6x and 4/7 / 7-16 and 8-20. An order size that is not printed in a "
+    "header still belongs to the column whose range covers it.\n"
+    "Adult letter sizes S, M, L, XL and XXL are larger than every numbered childrenswear range, "
+    "so they belong to the LARGEST size column, the same one as 7-16 and 8-20. Read the code "
+    "and its colour from that column. Do not return REVIEW merely because the letter size is "
+    "not spelled out in the header - the column still governs. That column is usually the "
+    "black 'B' hanger family, so take its colour from the cell, not from a sentence about "
+    "merged size packs."
 )
 
 EXCEL_SHEET_BLOCK = (
@@ -643,6 +656,7 @@ class DeepSeekClassifier:
             SECURITY_BLOCK,
             EXCEL_PROCEDURE_BLOCK,
             EXCEL_CITATION_BLOCK,
+            SIZE_COLUMN_BLOCK,
             VALUE_BLOCK,
             HANG_INVARIANT_BLOCK,
             FLAT_BLOCK,
@@ -729,7 +743,11 @@ class DeepSeekClassifier:
                 last_error = "DeepSeek JSON response has no decisions array"
             except urllib.error.HTTPError as exc:
                 last_error = f"DeepSeek HTTP {exc.code}"
-                if exc.code in {400, 401, 403, 404, 429}:
+                # These responses cannot be fixed by immediately resending the
+                # same request. In particular, 402 means the account has no
+                # credit, so retrying only consumes call budget and duplicates
+                # the failure reported in the audit.
+                if exc.code in {400, 401, 402, 403, 404, 429}:
                     break
             except (urllib.error.URLError, socket.timeout, TimeoutError) as exc:
                 last_error = f"DeepSeek connection failed: {type(exc).__name__}"
