@@ -456,6 +456,24 @@ class DeepSeekClassifier:
         self.groups_returned = 0
         self.failures: list[str] = []
         self._lock = threading.Lock()
+        # Accounts are classified in parallel and each one opens its own pool, so
+        # the concurrency setting has to be enforced here rather than by any one
+        # pool's size: it caps requests in flight across the whole run.
+        self._in_flight = threading.Semaphore(settings.concurrency)
+        self._key_cursor = 0
+
+    def _next_key(self) -> str:
+        """Hand out API keys round-robin across the whole run.
+
+        Rotating on a per-call batch index would restart at the first key for
+        every account, so once accounts run concurrently their opening batches
+        would all land on the same key.
+        """
+        keys = self.settings.api_keys
+        with self._lock:
+            key = keys[self._key_cursor % len(keys)]
+            self._key_cursor += 1
+        return key
 
     @classmethod
     def from_env(cls) -> "DeepSeekClassifier | None":
@@ -493,7 +511,8 @@ class DeepSeekClassifier:
             group["row_numbers"].append(row_number)
 
         groups = list(grouped.values())
-        self.groups_requested += len(groups)
+        with self._lock:
+            self.groups_requested += len(groups)
         decisions_by_row: dict[int, dict[str, Any]] = {}
 
         # Answers already paid for are reused before any batch is planned. The
@@ -516,7 +535,8 @@ class DeepSeekClassifier:
                     continue
                 for row_number in group["row_numbers"]:
                     decisions_by_row[row_number] = decision
-                self.groups_returned += 1
+                with self._lock:
+                    self.groups_returned += 1
             groups = pending
 
         if not groups:
@@ -546,15 +566,14 @@ class DeepSeekClassifier:
         from text_sof import TextSof
 
         is_text_sof = isinstance(sof_wb, TextSof)
-        keys = self.settings.api_keys
         # One key can serve many concurrent requests, so parallelism is set by
         # HANGER_LLM_CONCURRENCY, not by how many keys happen to be configured.
         workers = min(self.settings.concurrency, len(batches))
 
         def dispatch(indexed: tuple[int, tuple[dict[str, Any], str]]):
-            index, (group_ids, evidence) = indexed
+            _, (group_ids, evidence) = indexed
             args = (group_ids, allowed_categories, selected_sof.name,
-                    evidence, keys[index % len(keys)])
+                    evidence, self._next_key())
             payload = self._request(*args, text_mode=True) if is_text_sof else self._request(*args)
             return group_ids, payload
 
@@ -585,7 +604,8 @@ class DeepSeekClassifier:
                         )] = decision
                 if fresh:
                     self.cache.set_many(fresh)
-                self.groups_returned += len(returned)
+                with self._lock:
+                    self.groups_returned += len(returned)
         return decisions_by_row
 
     def _request(
@@ -734,8 +754,11 @@ class DeepSeekClassifier:
                 method="POST",
             )
             try:
-                with urllib.request.urlopen(request, timeout=self.settings.timeout_seconds) as response:
-                    response_payload = json.loads(response.read().decode("utf-8"))
+                with self._in_flight:
+                    with urllib.request.urlopen(
+                        request, timeout=self.settings.timeout_seconds
+                    ) as response:
+                        response_payload = json.loads(response.read().decode("utf-8"))
                 content = response_payload["choices"][0]["message"]["content"]
                 parsed = json.loads(content)
                 if isinstance(parsed, dict) and isinstance(parsed.get("decisions"), list):

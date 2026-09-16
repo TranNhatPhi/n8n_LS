@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -1260,6 +1261,7 @@ def run(input_path: Path, sof_root: Path, rules_path: Path, output_dir: Path,
             })
 
         if llm_classifier is not None:
+            pending_accounts = []
             for account in sorted(accounts):
                 selection = selections.get(account)
                 if not selection or selection.status != "MATCHED" or not selection.path:
@@ -1269,18 +1271,38 @@ def run(input_path: Path, sof_root: Path, rules_path: Path, output_dir: Path,
                     for item in processed
                     if item["account"] == account and item["result"]["status"] == "REVIEW"
                 ]
-                if not candidates:
-                    continue
+                if candidates:
+                    pending_accounts.append((account, selection, candidates))
+
+            def classify_account(job):
+                account, selection, candidates = job
                 try:
-                    llm_decisions = llm_classifier.classify(
+                    return account, llm_classifier.classify(
                         candidates, allowed, sof_workbooks[account], selection.path
-                    )
+                    ), None
                 except Exception as exc:
-                    audit["errors"].append(
-                        f"DeepSeek fallback failed for account {account}: {type(exc).__name__}"
+                    return account, None, (
+                        f"DeepSeek fallback failed for account {account}: "
+                        f"{type(exc).__name__}"
                     )
+
+            # Each account waits on its own DeepSeek calls, so running them one
+            # after another made the wall time their sum rather than their max.
+            # Only the HTTP work overlaps: every account reads its own workbook,
+            # and the classifier caps requests in flight across all of them.
+            classified = []
+            if len(pending_accounts) == 1:
+                classified.append(classify_account(pending_accounts[0]))
+            elif pending_accounts:
+                with ThreadPoolExecutor(max_workers=len(pending_accounts)) as pool:
+                    classified = list(pool.map(classify_account, pending_accounts))
+
+            min_confidence = float(getattr(llm_classifier, "min_confidence", 0.85))
+            for account, llm_decisions, error in classified:
+                if error:
+                    audit["errors"].append(error)
                     continue
-                min_confidence = float(getattr(llm_classifier, "min_confidence", 0.85))
+                selection = selections[account]
                 for item in processed:
                     if item["account"] != account or item["result"]["status"] != "REVIEW":
                         continue

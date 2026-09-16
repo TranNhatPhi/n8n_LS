@@ -2,6 +2,7 @@ import io
 import json
 import sys
 import threading
+import time
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -128,6 +129,63 @@ def make_order(path: Path, cases=CASES):
         ws.append([values.get(header, "") for header in HEADERS])
         ws.cell(ws.max_row, HEADERS.index("PO#") + 1).number_format = "0000000"
     wb.save(path)
+
+
+class OverlapRecordingClassifier:
+    """Records how many accounts were inside classify() at the same moment."""
+
+    min_confidence = 0.85
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.inside = 0
+        self.peak = 0
+        self.accounts = []
+
+    def classify(self, rows, allowed_categories, sof_wb, selected_sof):
+        with self.lock:
+            self.inside += 1
+            self.peak = max(self.peak, self.inside)
+            self.accounts.append(selected_sof.name)
+        # Long enough that a sequential loop could not overlap by accident.
+        time.sleep(0.3)
+        with self.lock:
+            self.inside -= 1
+        return {}
+
+    def audit_info(self):
+        return {"enabled": True, "provider": "test", "api_calls": len(self.accounts)}
+
+
+def test_accounts_are_classified_in_parallel(tmp_path):
+    sof_root = tmp_path / "sof"
+    sof_root.mkdir()
+    make_sof(sof_root)
+    make_hbe_sof(sof_root)
+    order = tmp_path / "two-accounts.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Orders"
+    ws.append(HEADERS)
+    for account, po in (("H040M", 900001), ("H494M", 900002)):
+        values = {
+            "Division": "G", "Ref#": "NKG-XX", "Style": "UNKNOWN",
+            "Product Description": "MYSTERY ITEM", "Label": "ZZ",
+            "Account": account, "PO#": po, "Size Configuration": "2T",
+            "Hang/Flat": "Hang",
+        }
+        ws.append([values.get(header, "") for header in HEADERS])
+    wb.save(order)
+    rules = Path(__file__).resolve().parents[1] / "rules" / "hanger_rules.json"
+    classifier = OverlapRecordingClassifier()
+
+    run(order, sof_root, rules, tmp_path / "out", llm_classifier=classifier)
+
+    assert sorted(classifier.accounts) == [
+        "H040M Stock Replenishment SO Form 8.31.26.xlsx",
+        "H494M - SOFORM - HBE 7.23.xlsx",
+    ]
+    assert classifier.peak == 2, "both accounts must be in flight at once"
 
 
 def test_all_eight_acceptance_rows(tmp_path):
