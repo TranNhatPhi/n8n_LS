@@ -701,6 +701,11 @@ class DeepSeekClassifier:
         # The evidence runs to tens of thousands of characters, so the task is
         # restated after it: instructions given only above a long block lose out
         # to the block itself.
+        # Key order is the wire order, and DeepSeek caches prompts by common
+        # prefix. Everything identical between batches of one account comes
+        # first, so the SOF evidence - by far the largest block - stays inside
+        # the shared prefix. Putting order_groups earlier made every batch a
+        # cache miss and paid to re-read the whole SOF each time.
         user = json.dumps({
             "instruction": (
                 "Return valid JSON matching output_schema, one decision per group_id. "
@@ -709,9 +714,9 @@ class DeepSeekClassifier:
             "source_file": source_name,
             "allowed_product_categories": sorted(allowed_categories),
             "allowed_source_sheets": allowed_source_sheets,
-            "order_groups": order_groups,
             "output_schema": schema,
             "sof_text_evidence" if text_mode else "sof_cell_evidence": evidence,
+            "order_groups": order_groups,
             "final_reminder": (
                 f"Cite before you answer, then read each value verbatim off the cited evidence. "
                 f"When sof_hang_flat is Hang, hanger_code and hanger_color must be real values "
