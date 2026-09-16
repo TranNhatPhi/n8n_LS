@@ -103,7 +103,7 @@ def _api_keys_from_env() -> tuple[str, ...]:
 
 # Bumped whenever the prompt or the decision schema changes, so stale answers
 # from an older prompt can never be served out of the cache.
-PROMPT_VERSION = "v6"
+PROMPT_VERSION = "v7"
 
 
 class DecisionCache:
@@ -319,6 +319,11 @@ EXCEL_CITATION_BLOCK = (
     "A SOF normally puts the hanger code in a table and states the hanger colour, the sizer or "
     "the sticker rule in a sentence below that table. Cite BOTH ranges. Never drop a value "
     "merely because the table alone did not carry it - widen the citation instead.\n"
+    "Read the colour from the cell holding the code whenever that cell names one, for example "
+    "'485B/6010B Black Crown Sizer w/ White Lettering' is a BLACK hanger. Only fall back to a "
+    "general sentence when the code's own cell and row say nothing about colour. A general "
+    "instruction such as 'use white plastic hangers on merged size packs' never overrides the "
+    "size column the order actually falls in.\n"
     "Cite only ranges you actually used, and only on the one sheet you named."
 )
 
@@ -692,10 +697,17 @@ class DeepSeekClassifier:
             "temperature": 0,
             "stream": False,
         }
-        last_error = "DeepSeek returned no usable JSON"
+        last_error = ""
         for _ in range(2):
             with self._lock:
                 if self.calls >= self.settings.max_calls:
+                    # No request was sent. Saying "no usable JSON" here would
+                    # blame the model for a budget this run never had.
+                    last_error = last_error or (
+                        f"No call budget left: HANGER_LLM_MAX_CALLS="
+                        f"{self.settings.max_calls} was already spent, so this "
+                        f"batch of {len(groups)} group(s) was never sent"
+                    )
                     break
                 self.calls += 1
             request = urllib.request.Request(
@@ -723,4 +735,4 @@ class DeepSeekClassifier:
                 last_error = f"DeepSeek connection failed: {type(exc).__name__}"
             except (KeyError, IndexError, TypeError, json.JSONDecodeError):
                 last_error = "DeepSeek returned invalid JSON"
-        raise RuntimeError(last_error)
+        raise RuntimeError(last_error or "DeepSeek returned no usable JSON")

@@ -707,6 +707,30 @@ def no_claim_is_supported(field: str, statements: list[str]) -> bool:
     return any(NEGATION_RE.search(text) for text in mentions)
 
 
+HANGER_COLOURS = ("black", "white")
+
+
+def colour_stated_with_code(statements: list[str], hanger_code: str) -> str:
+    """The hanger colour named in the same cell as the code, if the SOF names one.
+
+    A cell like "485B/6010B Black Crown Sizer w/ White Lettering" describes the
+    hanger first and the lettering second, so the leading colour is the hanger's.
+    A cell holding the bare code names no colour and leaves the field to a
+    general instruction elsewhere on the sheet.
+    """
+    code = key(hanger_code)
+    if not code:
+        return ""
+    for text in statements:
+        lowered = key(text)
+        if code not in lowered:
+            continue
+        named = [colour for colour in HANGER_COLOURS if colour in lowered]
+        if named:
+            return min(named, key=lowered.index)
+    return ""
+
+
 def claim_is_supported(claim: str, statements: list[str], field: str) -> bool:
     normalized_claim = key(claim)
     normalized_evidence = key(" ".join(statements))
@@ -779,6 +803,16 @@ def validate_llm_evidence(
     # it was just checked, so the per-field denials need no separate citation.
     if sof_hf == "Flat":
         return True, ""
+    # A general "use white hangers" sentence must not override the size column
+    # the order falls in, so the code's own cell wins wherever it names a colour.
+    code = clean(decision.get("hanger_code"))
+    stated_colour = colour_stated_with_code(statements, code)
+    claimed_colour = key(decision.get("hanger_color"))
+    if stated_colour and claimed_colour != stated_colour:
+        return False, (
+            f"Cited cell for hanger_code {code} states a {stated_colour.upper()} hanger, "
+            f"not {clean(decision.get('hanger_color')) or '[blank]'}"
+        )
     for field in (
         "hanger_code", "hanger_color", "color_sizer", "sticker_hanger", "size_sticker_hanger",
     ):

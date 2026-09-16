@@ -626,6 +626,49 @@ def test_unrelated_na_does_not_license_a_no_claim(tmp_path):
     assert "does not support color_sizer" in result["validation_note"]
 
 
+def test_general_white_sentence_cannot_override_the_codes_own_cell(tmp_path):
+    """A merged-pack instruction must not recolour a size band the SOF calls black."""
+    path = tmp_path / "H040M Stock Replenishment SO Form 8.31.26.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "SETS"
+    ws["A21"] = "Hanger Required"
+    ws["B21"] = "Yes"
+    ws["A26"] = "Hanger Type for 2 pc pant sets"
+    ws["B26"] = "472/9510"
+    ws["G26"] = "485B/6010B Black Crown Sizer w/ White Lettering"
+    ws["A31"] = "Sizers"
+    ws["G31"] = "Black size clip w/ white lettering"
+    ws["B33"] = "Use white plastic hangers on merged size packs, hang the set."
+    wb.save(path)
+
+    wb = load_workbook(path, data_only=True)
+    row = {"Account": "H040M", "Label": "WH", "Hang/Flat": "Hang"}
+    decision = {
+        "status": "MATCHED", "product_category": "SETS", "sof_hang_flat": "Hang",
+        "hanger_code": "485B/6010B",
+        "color_sizer": "Black size clip w/ white lettering",
+        "sticker_hanger": "NO", "size_sticker_hanger": "NO",
+        "source_sheet": "SETS", "source_cells": ["A21:G31", "B33:B33"],
+        "confidence": 0.99, "reasoning": "Large size band.",
+    }
+
+    rejected = resolve_llm_decision(
+        row, llm_review_state(), dict(decision, hanger_color="WHITE"),
+        {"SETS"}, wb, path, min_confidence=0.85,
+    )
+    assert rejected["status"] == "REVIEW"
+    assert "states a BLACK hanger" in rejected["validation_note"]
+
+    accepted = resolve_llm_decision(
+        row, llm_review_state(), dict(decision, hanger_color="BLACK"),
+        {"SETS"}, wb, path, min_confidence=0.85,
+    )
+    wb.close()
+    assert accepted["status"] == "MATCHED", accepted["validation_note"]
+    assert accepted["hanger_color"] == "BLACK"
+
+
 def test_not_stated_accessory_means_none_required_but_hanger_is_reviewed(tmp_path):
     """Silence about a sticker is absence; silence about the hanger is a miss."""
     sof = make_split_evidence_sof(tmp_path)
