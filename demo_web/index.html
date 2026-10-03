@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hanger Automation — Trình Diễn Xử Lý Tra Mã Hanger Trực Tiếp Cho Khách Hàng</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Header / Navigation -->
+  <header class="app-header">
+    <div class="header-container">
+      <div class="brand">
+        <div class="brand-icon">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a3 3 0 0 0-3 3c0 .8.3 1.5.8 2.1L2 15a2 2 0 0 0 1.6 3.2H20.4A2 2 0 0 0 22 15L14.2 7.1c.5-.6.8-1.3.8-2.1a3 3 0 0 0-3-3z"/>
+            <circle cx="12" cy="5" r="1"/>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <div class="brand-title">Hanger Automation System <span class="badge badge-accent">Live Demo v2.0</span></div>
+          <div class="brand-subtitle">Hệ thống tự động tra cứu mã Hanger từ Đơn hàng, SOForm & Rule chuyền may</div>
+        </div>
+      </div>
+      <div class="header-actions">
+        <div class="system-status">
+          <span class="status-indicator active"></span>
+          <span class="status-label">Worker Engine: <strong>Active & Real Backend</strong></span>
+        </div>
+        <button id="btnLoadPreset" class="btn btn-secondary">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Nạp 3 Tệp Mẫu Dự Án
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="main-content">
+    <!-- Hero Banner -->
+    <section class="hero-banner">
+      <div class="hero-badge">CÔNG NGHỆ TRA CỨU KHÉP KÍN — AN TOÀN TUYỆT ĐỐI CHO XƯỞNG MAY</div>
+      <h1 class="hero-title">Hướng Đi Xử Lý Tra Mã Hanger Từ 3 Tệp Đầu Vào</h1>
+      <p class="hero-desc">
+        Hệ thống tự động liên kết <strong>File Đơn hàng (PO)</strong> với <strong>File SOForm</strong> của đúng Account, 
+        áp dụng từ điển trong <strong>File Rule cho Hanger</strong> để nhận diện nhóm và trích dẫn chính xác tọa độ ô nguồn.
+        <strong>100% trích xuất từ văn bản gốc, tuyệt đối không suy đoán bừa.</strong>
+      </p>
+    </section>
+
+    <!-- Download Sample Files for Clients -->
+    <section class="sample-download-bar">
+      <div class="sample-bar-inner">
+        <div class="sample-bar-text">
+          <div class="sample-bar-title">📦 Khách hàng muốn thử nghiệm bằng tệp thực tế?</div>
+          <div class="sample-bar-sub">Tải bộ 3 tệp mẫu chuẩn của dự án về máy tính để tự kéo thả thử nghiệm:</div>
+        </div>
+        <div class="sample-bar-links">
+          <a href="/api/download/Don_Hang_Mau_H040M_Nhanh.xlsx" class="sample-link" download>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            1. Đơn Hàng Mẫu (.xlsx)
+          </a>
+          <a href="/api/download/H040M_Stock_Replenishment_SO_Form.xlsx" class="sample-link" download>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            2. SOForm Mẫu (.xlsx)
+          </a>
+          <a href="/api/download/Rule_cho_Hanger.docx" class="sample-link" download>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            3. File Rule Mẫu (.docx)
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3 Input Cards Section with REAL FILE UPLOAD -->
+    <section class="inputs-section">
+      <div class="section-header">
+        <div class="section-tag">BƯỚC 1: TIẾP NHẬN 3 TỆP ĐẦU VÀO THẬT</div>
+        <h2>Tải Lên Hoặc Chọn Tệp Để Xử Lý</h2>
+        <p>Bạn có thể bấm vào khung để tải file thật từ máy tính của bạn, hoặc dùng bộ file mẫu có sẵn</p>
+      </div>
+
+      <div class="inputs-grid">
+        <!-- Input 1: Order File -->
+        <div class="input-card" id="cardOrder">
+          <div class="card-head">
+            <div class="card-icon cyan">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+            </div>
+            <div class="card-title-wrap">
+              <span class="file-type-badge">Tệp 1 / 3</span>
+              <h3>File Đơn Hàng (Order)</h3>
+            </div>
+          </div>
+          <p class="card-info">
+            Chứa PO, Style, Ref#, Mô tả món hàng, Số lượng, Size Configuration và trạng thái <strong>Hang/Flat</strong>.
+          </p>
+          <div class="supported-formats">
+            <span>Hỗ trợ:</span>
+            <span class="pill">.XLSX</span>
+            <span class="pill">.XLS</span>
+            <span class="pill">.DOCX</span>
+            <span class="pill">.PDF</span>
+          </div>
+
+          <!-- Hidden Real File Input -->
+          <input type="file" id="realInputOrder" accept=".xlsx,.xls,.docx,.pdf" style="display:none;">
+
+          <div class="file-dropzone" id="dropzoneOrder">
+            <div class="file-status empty">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              <div class="file-name" id="orderFileName">Chọn hoặc kéo thả file đơn hàng</div>
+              <div class="file-meta" id="orderFileMeta">Nhấp vào đây để duyệt file từ máy tính</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Input 2: SOForm File -->
+        <div class="input-card" id="cardSOF">
+          <div class="card-head">
+            <div class="card-icon yellow">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+            </div>
+            <div class="card-title-wrap">
+              <span class="file-type-badge">Tệp 2 / 3</span>
+              <h3>File SOForm (Ship Order Form)</h3>
+            </div>
+          </div>
+          <p class="card-info">
+            Nguồn sự thật duy nhất của khách hàng (Account H040M, K413M...). Mỗi sheet là một nhóm sản phẩm chứa quy định hanger.
+          </p>
+          <div class="supported-formats">
+            <span>Định dạng:</span>
+            <span class="pill">.XLSX</span>
+            <span class="pill">Tối đa 20 file / batch</span>
+          </div>
+
+          <!-- Hidden Real File Input -->
+          <input type="file" id="realInputSOF" accept=".xlsx" multiple style="display:none;">
+
+          <div class="file-dropzone" id="dropzoneSOF">
+            <div class="file-status empty">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              <div class="file-name" id="sofFileName">Chọn hoặc kéo thả file SOForm</div>
+              <div class="file-meta" id="sofFileMeta">Nhấp vào đây để duyệt file (.xlsx - tối đa 20 file)</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Input 3: Rule Hanger File -->
+        <div class="input-card" id="cardRule">
+          <div class="card-head">
+            <div class="card-icon purple">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+            </div>
+            <div class="card-title-wrap">
+              <span class="file-type-badge">Tệp 3 / 3</span>
+              <h3>File Rule Cho Hanger</h3>
+            </div>
+          </div>
+          <p class="card-info">
+            Quy tắc từ ngữ nhận diện nhóm (TOPS, BOTTOMS, SETS...) và bộ quy tắc mapping cố định đã được kiểm duyệt.
+          </p>
+          <div class="supported-formats">
+            <span>Định dạng:</span>
+            <span class="pill">.DOCX</span>
+            <span class="pill">.JSON</span>
+          </div>
+
+          <!-- Hidden Real File Input -->
+          <input type="file" id="realInputRule" accept=".docx,.json" style="display:none;">
+
+          <div class="file-dropzone" id="dropzoneRule">
+            <div class="file-status empty">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              <div class="file-name" id="ruleFileName">Chọn file quy tắc Hanger</div>
+              <div class="file-meta" id="ruleFileMeta">Mặc định dùng Rule_cho_Hanger.docx</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Action & Execution Bar -->
+      <div class="action-banner">
+        <div class="action-mode-options">
+          <div class="radio-label">
+            <span><strong>Toàn bộ file:</strong> Xử lý đầy đủ tất cả dòng đơn hàng (Full Batch)</span>
+          </div>
+        </div>
+
+        <button id="btnRunPipeline" class="btn btn-run">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          ⚡ Khởi Chạy Tra Mã Hanger (Chạy Thật)
+        </button>
+        <span class="action-hint" id="actionHint">Nhấn nút xanh để chạy pipeline thực tế qua Backend Python Engine</span>
+      </div>
+
+      <!-- Progress bar -->
+      <div class="execution-progress-bar" id="execProgressWrap" style="display:none;">
+        <div class="progress-info">
+          <span id="progressStepText">Đang khởi tạo kết nối worker engine...</span>
+          <span id="progressTimeText">0.0s</span>
+        </div>
+        <div class="progress-track">
+          <div class="progress-fill" id="progressFill"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Section 2: Interactive Pipeline Flow (Sơ Đồ Hướng Đi Chi Tiết) -->
+    <section class="pipeline-section">
+      <div class="section-header">
+        <div class="section-tag">BƯỚC 2: HƯỚNG ĐI CỦA DỮ LIỆU QUA 5 TRẠM XỬ LÝ</div>
+        <h2>Quy Trình Xử Lý Khép Kín & Kiểm Soát Rủi Ro</h2>
+        <p>Bấm vào từng trạm dưới đây để xem nguyên lý vận hành, điều kiện kiểm duyệt và logic an toàn</p>
+      </div>
+
+      <!-- Flow Stepper Diagram -->
+      <div class="pipeline-flow-wrapper">
+        <div class="flow-track">
+          <div class="flow-step active" data-step="1">
+            <div class="step-circle"><span class="step-num">1</span></div>
+            <div class="step-content">
+              <h4>Nhập & Ghép Cặp File</h4>
+              <p>Ghép đơn hàng với SOF theo Account (Không đoán mò)</p>
+            </div>
+          </div>
+          <div class="flow-connector"><div class="connector-line"></div></div>
+
+          <div class="flow-step" data-step="2">
+            <div class="step-circle"><span class="step-num">2</span></div>
+            <div class="step-content">
+              <h4>Nhận Diện Category</h4>
+              <p>Áp dụng Rule Docx tra Description ra Category & Sheet</p>
+            </div>
+          </div>
+          <div class="flow-connector"><div class="connector-line"></div></div>
+
+          <div class="flow-step" data-step="3">
+            <div class="step-circle"><span class="step-num">3</span></div>
+            <div class="step-content">
+              <h4>Kiểm Tra Rule Cứng</h4>
+              <p>Ưu tiên chạy Rules đã duyệt trong <code>hanger_rules.json</code></p>
+            </div>
+          </div>
+          <div class="flow-connector"><div class="connector-line"></div></div>
+
+          <div class="flow-step" data-step="4">
+            <div class="step-circle"><span class="step-num">4</span></div>
+            <div class="step-content">
+              <h4>Tra Cứu SOF & Tọa Độ Ô</h4>
+              <p>Đọc chính xác 1-3 vùng ô trong SOF theo dải size & Hang/Flat</p>
+            </div>
+          </div>
+          <div class="flow-connector"><div class="connector-line"></div></div>
+
+          <div class="flow-step" data-step="5">
+            <div class="step-circle"><span class="step-num">5</span></div>
+            <div class="step-content">
+              <h4>Phân Loại & Xuất Bản</h4>
+              <p>Ghi <code>MATCHED</code> hoặc <code>REVIEW</code> vào bảng màu chuẩn</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Pipeline Step Detail Card -->
+      <div class="pipeline-detail-card" id="stepDetailCard">
+        <div class="detail-header">
+          <div class="detail-badge" id="stepBadge">Trạm 1: Tiếp Nhận & Khớp File</div>
+          <h3 id="stepTitle">Kiểm Tra File Đơn Hàng & Liên Kết SOForm Theo Account</h3>
+        </div>
+        <div class="detail-body">
+          <div class="detail-column">
+            <h5>🎯 Mục tiêu & Điều kiện đầu vào</h5>
+            <p id="stepGoal">
+              Hệ thống đọc danh sách đơn hàng. Mỗi dòng có trường <code>Account</code> (ví dụ <code>H040M</code>, <code>K413M</code>). 
+              Hệ thống tìm trong danh sách các file SOForm đã tải lên file nào có tên chứa mã <code>Account</code> này. 
+              Nếu không tìm thấy file SOForm tương ứng, dòng đơn hàng lập tức chuyển sang trạng thái <strong>REVIEW</strong> với lý do "Không có SOF cho account", tuyệt đối không dùng SOF của khách khác.
+            </p>
+            <div class="logic-box" id="stepLogic">
+              <strong>Quy tắc an toàn:</strong> Không bao giờ sửa file đơn hàng gốc. Đơn hàng Word/PDF được chuyển đổi thành bảng dữ liệu trung gian chuẩn trước khi kiểm tra.
+            </div>
+          </div>
+          <div class="detail-column">
+            <h5>🔍 Dữ liệu mẫu tại trạm này</h5>
+            <pre class="code-preview" id="stepCodePreview"><code>// Ghép cặp Account H040M:
+Order Row 3: Account = "H040M", PO = "0711997"
+Matched SOF: "H040M  Stock Replenishment SO Form 8.31.26.xlsx"
+Status: VALIDATED_ACCOUNT</code></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Section 3: Interactive Rule Playground -->
+    <section class="rules-section">
+      <div class="section-header">
+        <div class="section-tag">BƯỚC 3: BÀN THỬ NGHIỆM TỪ KHÓA & RULE HANGER</div>
+        <h2>Cơ Chế Phân Loại Danh Mục Theo File Rule</h2>
+        <p>Thử gõ bất kỳ mô tả món hàng nào để xem cơ chế định tuyến sang đúng Sheet trong SOForm</p>
+      </div>
+
+      <div class="rule-tester-box">
+        <div class="tester-input-bar">
+          <div class="search-input-wrapper">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" id="ruleSearchInput" placeholder="Ví dụ: BODYSUIT PANT SET, FLEECE PANT, S/S TEE, 2PK ROMPER, ROMPER..." value="BODYSUIT PANT SET">
+          </div>
+          <button id="btnQuickTest" class="btn btn-secondary">Kiểm Tra Ngay</button>
+        </div>
+
+        <div class="tester-presets">
+          <span>Gợi ý mẫu:</span>
+          <button class="preset-tag" data-query="BODYSUIT PANT SET">BODYSUIT PANT SET</button>
+          <button class="preset-tag" data-query="ROMPER">ROMPER (1 món)</button>
+          <button class="preset-tag" data-query="2PK FOOTED COVERALL">2PK FOOTED COVERALL</button>
+          <button class="preset-tag" data-query="FLEECE PANT">FLEECE PANT</button>
+          <button class="preset-tag" data-query="6PK CREW SOCK">6PK CREW SOCK</button>
+          <button class="preset-tag" data-query="LIGHT WEIGHT OUTERWEAR">OUTERWEAR</button>
+        </div>
+
+        <div class="rule-result-card" id="ruleResultCard">
+          <div class="result-header">
+            <div class="result-cat-badge" id="resCategory">SETS</div>
+            <div class="result-sheet-info">Trỏ tới Sheet SOF: <strong id="resSheet">SETS</strong></div>
+          </div>
+          <div class="result-explanation" id="resExplanation">
+            Bộ nhiều món: track set, short set, pant set, 2PC/3PC set. Mô tả kết thúc bằng SET luôn xếp SETS, kể cả khi phía trước có pant, short, bodysuit.
+          </div>
+          <div class="result-note" id="resSpecialNote">
+            💡 <strong>Lưu ý đặc thù:</strong> Romper 1 món xếp TOPS, nhưng Romper nhiều cái (2PK) xếp COVERALLS. Quy ước riêng của khách hàng trong file Rule.
+          </div>
+        </div>
+
+        <!-- Rule Accordion -->
+        <div class="rules-table-collapsible">
+          <div class="collapsible-header" id="toggleRulesTable">
+            <span>Xem Bảng Tra Cứu Toàn Bộ 16 Nhóm Sản Phẩm (Trích từ <code>Rule_cho_Hanger.docx</code>)</span>
+            <svg class="chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          </div>
+          <div class="collapsible-content" id="rulesTableContent">
+            <div class="table-responsive">
+              <table class="rules-table" id="tableRules">
+                <thead>
+                  <tr>
+                    <th>Product Category (Tên Sheet SOF)</th>
+                    <th>Dấu Hiệu Nhận Diện & Ví Dụ Thực Tế</th>
+                  </tr>
+                </thead>
+                <tbody id="rulesTableBody">
+                  <!-- Populated by JS -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Section 4: Live Data Processing & Real Excel Results -->
+    <section class="results-section" id="resultsSection">
+      <div class="section-header">
+        <div class="section-tag">BƯỚC 4: KẾT QUẢ ĐỐI SOÁT & BẢNG TỔNG HỢP HANGER</div>
+        <h2>Bảng Kết Quả Mô Phỏng Chuẩn TỔNG HỢP HANGER</h2>
+        <p>Phối màu nghiệp vụ: <span class="cyan-text">■ Cột Đơn Hàng</span>, <span class="yellow-text">■ Cột Thuộc Tính SOF</span>, <span class="grey-text">■ Cột Bằng Chứng Audit</span></p>
+      </div>
+
+      <!-- Stats Bar -->
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-label">Tổng Dòng Đơn Hàng</div>
+          <div class="stat-value" id="statTotal">5,817</div>
+          <div class="stat-sub" id="statInputFile">Tệp VLK VLH LPO</div>
+        </div>
+        <div class="stat-card matched">
+          <div class="stat-label">Đã Khớp (MATCHED)</div>
+          <div class="stat-value" id="statMatched">1,898</div>
+          <div class="stat-sub" id="statMatchedSub">Có đủ chứng cứ trích dẫn</div>
+        </div>
+        <div class="stat-card review">
+          <div class="stat-label">Cần Xem Lại (REVIEW)</div>
+          <div class="stat-value" id="statReview">2,561</div>
+          <div class="stat-sub" id="statReviewSub">Bảo vệ an toàn cho chuyền may</div>
+        </div>
+        <div class="stat-card safety">
+          <div class="stat-label">Tỷ Lệ Đoán Mò</div>
+          <div class="stat-value text-emerald">0.0%</div>
+          <div class="stat-sub">100% dòng có trích dẫn ô cụ thể</div>
+        </div>
+      </div>
+
+      <!-- Filters & Download Controls -->
+      <div class="table-controls">
+        <div class="filter-tabs">
+          <button class="filter-btn active" data-filter="all">Tất cả mẫu (<span id="countAll">20</span>)</button>
+          <button class="filter-btn" data-filter="MATCHED">Chỉ MATCHED (<span id="countMatched">14</span>)</button>
+          <button class="filter-btn" data-filter="REVIEW">Chỉ REVIEW (<span id="countReview">6</span>)</button>
+          <button class="filter-btn" data-filter="Hang">Hàng Treo (Hang)</button>
+          <button class="filter-btn" data-filter="Flat">Hàng Gấp (Flat)</button>
+        </div>
+        <div class="table-action-btns">
+          <button id="btnDownloadCleanExcel" class="btn btn-sm" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: #fff; font-weight:600; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.25); border:none;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+            📊 Xuất Excel Gọn (Bỏ Cột Audit)
+          </button>
+          <a id="btnDownloadRealExcel" href="#" class="btn btn-sm btn-primary" style="display:none;" target="_blank">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Tải Excel Đầy Đủ (Kèm Audit)
+          </a>
+          <button id="btnExportJSON" class="btn btn-sm btn-outline">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Tải File Audit JSON
+          </button>
+          <button id="btnExportCSV" class="btn btn-sm btn-outline">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+            Xuất Bảng CSV
+          </button>
+        </div>
+      </div>
+
+      <!-- Excel Simulator Table -->
+      <div class="excel-table-container">
+        <div class="table-responsive">
+          <table class="excel-sim-table" id="resultsTable">
+            <thead>
+              <tr class="super-header">
+                <th colspan="7" class="th-cyan">1. THÔNG TIN ĐƠN HÀNG GỐC (ORDER COLUMNS)</th>
+                <th colspan="6" class="th-yellow">2. QUY ĐỊNH HANGER TỪ SOF</th>
+                <th colspan="4" class="th-grey">3. ĐỐI SOÁT & TRUY VẾT BẰNG CHỨNG (AUDIT)</th>
+              </tr>
+              <tr class="sub-header">
+                <th class="col-cyan">PO#</th>
+                <th class="col-cyan">Account</th>
+                <th class="col-cyan">Ref# / Style</th>
+                <th class="col-cyan">Product Description</th>
+                <th class="col-cyan">Category</th>
+                <th class="col-cyan">Size Config</th>
+                <th class="col-cyan">Hang/Flat</th>
+                <th class="col-yellow">Hanger Code</th>
+                <th class="col-yellow">Hanger Color</th>
+                <th class="col-yellow">Color Sizer</th>
+                <th class="col-yellow">Sticker Hanger</th>
+                <th class="col-yellow">SIZE Sticker</th>
+                <th class="col-yellow">NCC</th>
+                <th class="col-grey">Trạng Thái</th>
+                <th class="col-grey">Sheet SOF</th>
+                <th class="col-grey">Tọa Độ Ô Trích Dẫn</th>
+                <th class="col-grey">Chi Tiết</th>
+              </tr>
+            </thead>
+            <tbody id="resultsTableBody">
+              <!-- Rendered via JS -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Section 5: Architecture Diagram & Tech Specs -->
+    <section class="specs-section">
+      <div class="section-header">
+        <div class="section-tag">BƯỚC 5: KIẾN TRÚC HỆ THỐNG N8N + DOCKER WORKER</div>
+        <h2>Mô Hình Triển Khai An Toàn Trên MacBook</h2>
+        <p>Giải thích cách n8n và Docker worker cô lập bảo mật, không rò rỉ dữ liệu</p>
+      </div>
+
+      <div class="specs-grid">
+        <div class="spec-card">
+          <div class="spec-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+          </div>
+          <h4>n8n Workflow Hub</h4>
+          <p>
+            Cung cấp Webhook / Form tải file cho người dùng. Đóng gói các file SOF và file đơn hàng, đẩy sang Docker network nội bộ. 
+            Cổng worker không mở ra ngoài MacBook, đảm bảo an toàn mạng.
+          </p>
+        </div>
+
+        <div class="spec-card">
+          <div class="spec-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          </div>
+          <h4>Worker Cô Lập & Tự Thu Dọn</h4>
+          <p>
+            Chạy Python, OpenPyXL, python-docx, PyMuPDF trong container cô lập. 
+            Không bao giờ sửa file đơn hàng gốc. Tự động xóa file tạm sau khi hoàn tất.
+          </p>
+        </div>
+
+        <div class="spec-card">
+          <div class="spec-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="m4.93 4.93 4.24 4.24"/><path d="m14.83 9.17 4.24-4.24"/><path d="m14.83 14.83 4.24 4.24"/><path d="m9.17 14.83-4.24 4.24"/></svg>
+          </div>
+          <h4>DeepSeek AI Kiểm Tra Bằng Chứng</h4>
+          <p>
+            Chỉ kích hoạt khi không có rule cứng. Kết quả của AI vẫn phải trải qua bộ lọc xác minh tọa độ ô (cell range) và trích dẫn nguyên văn trước khi được chấp thuận.
+          </p>
+        </div>
+
+        <div class="spec-card">
+          <div class="spec-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+          </div>
+          <h4>Bảo Vệ Đơn Hàng Tuyệt Đối</h4>
+          <p>
+            Chỉ dòng <code>MATCHED</code> mới được điền mã Hanger. Tất cả dòng <code>REVIEW</code> hoặc <code>MISMATCH</code> được đưa sang sheet riêng để nhân viên quản lý đơn hàng xác nhận.
+          </p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Evidence Inspector Modal -->
+  <div class="modal-backdrop" id="modalBackdrop">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <div class="modal-title-wrap">
+          <span class="modal-badge" id="modalStatusBadge">MATCHED</span>
+          <h3 id="modalRowTitle">Chi Tiết Bằng Chứng Tra Cứu Hanger</h3>
+        </div>
+        <button class="btn-close-modal" id="btnCloseModal">&times;</button>
+      </div>
+      <div class="modal-body" id="modalBody">
+        <!-- Rendered via JS -->
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="btnCloseModalBtn">Đóng</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <footer class="app-footer">
+    <div class="footer-container">
+      <div>Hệ Thống Tự Động Hóa Tra Mã Hanger — n8n & Docker Architecture</div>
+      <div class="footer-sub">Phiên bản thiết kế phục vụ kiểm duyệt và trực quan hóa luồng dữ liệu 3 tệp đầu vào</div>
+    </div>
+  </footer>
+
+  <script src="data_samples.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

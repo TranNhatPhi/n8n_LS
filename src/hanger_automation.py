@@ -334,7 +334,11 @@ def convert_xls_to_xlsx(source: Path, temp_dir: Path) -> Path:
                     excel.Quit()
                 except Exception:
                     pass
-    office = shutil.which("libreoffice") or shutil.which("soffice")
+    office = (
+        shutil.which("libreoffice")
+        or shutil.which("soffice")
+        or ("/Applications/LibreOffice.app/Contents/MacOS/soffice" if os.path.exists("/Applications/LibreOffice.app/Contents/MacOS/soffice") else None)
+    )
     if office:
         result = subprocess.run(
             [office, "--headless", "--convert-to", "xlsx", "--outdir", str(temp_dir), str(source)],
@@ -1040,12 +1044,12 @@ def audit_row_result(row_number: int, row: dict[str, str], result: dict[str, Any
         "product_category": result.get("product_category", ""),
         "size_configuration": row.get("Size Configuration", ""),
         "order_hang_flat": normalized_order_hf or row.get("Hang/Flat", ""),
-        "sof_hang_flat": result.get("sof_hang_flat", ""),
-        "hanger_code": result.get("hanger_code", ""),
-        "hanger_color": result.get("hanger_color", ""),
-        "color_sizer": result.get("color_sizer", ""),
-        "sticker_hanger": result.get("sticker_hanger", ""),
-        "size_sticker_hanger": result.get("size_sticker_hanger", ""),
+        "sof_hang_flat": "" if str(result.get("sof_hang_flat", "")).strip().upper() == "NO" else result.get("sof_hang_flat", ""),
+        "hanger_code": "" if str(result.get("hanger_code", "")).strip().upper() == "NO" else result.get("hanger_code", ""),
+        "hanger_color": "" if str(result.get("hanger_color", "")).strip().upper() == "NO" else result.get("hanger_color", ""),
+        "color_sizer": "" if str(result.get("color_sizer", "")).strip().upper() == "NO" else result.get("color_sizer", ""),
+        "sticker_hanger": "" if str(result.get("sticker_hanger", "")).strip().upper() == "NO" else result.get("sticker_hanger", ""),
+        "size_sticker_hanger": "" if str(result.get("size_sticker_hanger", "")).strip().upper() == "NO" else result.get("size_sticker_hanger", ""),
         "source_file": source_file,
         "source_sheet": result.get("source_sheet", ""),
         "source_cells": result.get("source_cells", ""),
@@ -1060,19 +1064,19 @@ def audit_row_result(row_number: int, row: dict[str, str], result: dict[str, Any
     }
 
 
-def build_result_workbook(row_results: list[dict[str, Any]], target: Path) -> Path:
+def build_result_workbook(row_results: list[dict[str, Any]], target: Path, include_audit: bool = True) -> Path:
     """Write the one-sheet result deliverable with TONG HOP header colours.
 
-    Hanger values are written only for MATCHED rows; MISMATCH and REVIEW rows keep
-    the SOF block empty so an unverified value can never be mistaken for a checked
-    one.
+    If include_audit is False, omit the grey audit columns (Status, Validation Note,
+    Match Method, Confidence, SOF File, SOF Sheet, SOF Cells, SOF Section, SOF Lines, SOF Excerpt),
+    keeping only the Cyan Order columns and Yellow SOF Hanger columns + NCC.
     """
     from openpyxl import Workbook
 
     wb = Workbook()
     ws = wb.active
-    ws.title = "KET QUA"
-    audit_names = [name for name, _ in RESULT_AUDIT_COLUMNS]
+    ws.title = "TONG HOP HANGER" if not include_audit else "KET QUA"
+    audit_names = [name for name, _ in RESULT_AUDIT_COLUMNS] if include_audit else []
     headers = RESULT_ORDER_COLUMNS + RESULT_SOF_COLUMNS + audit_names
     fills = (
         [PatternFill("solid", fgColor=ORDER_HEADER_FILL)] * len(RESULT_ORDER_COLUMNS)
@@ -1089,9 +1093,12 @@ def build_result_workbook(row_results: list[dict[str, Any]], target: Path) -> Pa
         matched = entry.get("status") == "MATCHED"
         for name in RESULT_SOF_COLUMNS:
             field = RESULT_SOF_SOURCE.get(name)
-            row.append(entry.get(field, "") if (matched and field) else "")
-        # The audit block is filled for every row: it is what explains a REVIEW.
-        row.extend(entry.get(field, "") for _, field in RESULT_AUDIT_COLUMNS)
+            val = entry.get(field, "") if (matched and field) else ""
+            if str(val).strip().upper() == "NO":
+                val = ""
+            row.append(val)
+        if include_audit:
+            row.extend(entry.get(field, "") for _, field in RESULT_AUDIT_COLUMNS)
         ws.append(row)
     ws.freeze_panes = "A2"
     ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}1"
@@ -1247,11 +1254,33 @@ def run(input_path: Path, sof_root: Path, rules_path: Path, output_dir: Path,
             rules = account_rules.get(account, [])
             from text_sof import TextSof
 
-            result = (
-                unresolved_text_row(values, allowed)
-                if isinstance(sof_workbooks[account], TextSof)
-                else resolve_row(values, rules, allowed, sof_workbooks[account], selection.path)
-            )
+            order_hf = normalize_hang_flat(values.get("Hang/Flat"))
+            if order_hf == "Flat":
+                category, _ = infer_category(values.get("Product Description", ""), allowed)
+                result = {
+                    "product_category": category or "FLAT",
+                    "sof_hang_flat": "Flat",
+                    "hanger_code": "",
+                    "hanger_color": "",
+                    "color_sizer": "",
+                    "sticker_hanger": "",
+                    "size_sticker_hanger": "",
+                    "source_sheet": "FLATPACKED",
+                    "source_cells": "",
+                    "source_section": "",
+                    "source_lines": "",
+                    "source_excerpt": "",
+                    "match_method": "FLAT_DEFAULT_BLANK",
+                    "confidence": 1.0,
+                    "status": "MATCHED",
+                    "validation_note": "",
+                }
+            else:
+                result = (
+                    unresolved_text_row(values, allowed)
+                    if isinstance(sof_workbooks[account], TextSof)
+                    else resolve_row(values, rules, allowed, sof_workbooks[account], selection.path)
+                )
             processed.append({
                 "row_number": row_number,
                 "values": values,
@@ -1332,7 +1361,8 @@ def run(input_path: Path, sof_root: Path, rules_path: Path, output_dir: Path,
                     "SIZE Sticker hanger": result["size_sticker_hanger"],
                 }
                 for field, value in target_values.items():
-                    ws.cell(row_number, columns[field], value)
+                    val = "" if str(value).strip().upper() == "NO" else value
+                    ws.cell(row_number, columns[field], val)
             else:
                 append_review(review_ws, ws.title, row_number, values, result,
                               selection.path.name if selection and selection.path else "")
@@ -1353,14 +1383,20 @@ def run(input_path: Path, sof_root: Path, rules_path: Path, output_dir: Path,
     audit["total_checked_rows"] = len(audit["row_results"])
     audit["output_file"] = str(output_path)
     result_path = output_path.with_name(output_path.stem + "_KETQUA.xlsx")
+    clean_result_path = output_path.with_name(output_path.stem + "_TONG_HOP_GON.xlsx")
     try:
-        build_result_workbook(audit["row_results"], result_path)
+        build_result_workbook(audit["row_results"], result_path, include_audit=True)
+        build_result_workbook(audit["row_results"], clean_result_path, include_audit=False)
         audit["result_file"] = str(result_path)
         audit["result_file_name"] = result_path.name
+        audit["result_clean_file"] = str(clean_result_path)
+        audit["result_clean_file_name"] = clean_result_path.name
     except Exception as exc:
         audit["errors"].append(f"Result sheet could not be written: {exc}")
         audit["result_file"] = ""
         audit["result_file_name"] = ""
+        audit["result_clean_file"] = ""
+        audit["result_clean_file_name"] = ""
     audit_path = output_path.with_suffix(".audit.json")
     with audit_path.open("w", encoding="utf-8") as handle:
         json.dump(audit, handle, ensure_ascii=False, indent=2)
