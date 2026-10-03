@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 
 import streamlit as st
+from docx import Document
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -90,6 +91,64 @@ def save_upload(upload, directory: Path, prefix: str = "") -> Path:
     return target
 
 
+def categories_from_rule_docx(path: Path) -> list[str]:
+    """Read the Product category column from a customer's Rule_cho_Hanger.docx."""
+    categories: list[str] = []
+    try:
+        document = Document(path)
+    except Exception as exc:
+        raise AutomationError(f"Không đọc được file rule DOCX: {exc}") from exc
+
+    for table in document.tables:
+        for row in table.rows:
+            cells = [cell.text.strip() for cell in row.cells]
+            if not cells or not cells[0] or cells[0].casefold() == "product category":
+                continue
+            category = cells[0].split("(", 1)[0].strip().upper()
+            if category and category not in categories:
+                categories.append(category)
+    if not categories:
+        raise AutomationError(
+            "File rule DOCX chưa có bảng với cột Product category. "
+            "Dùng Rule_cho_Hanger.docx theo đúng mẫu của dự án."
+        )
+    return categories
+
+
+def materialize_rule_upload(rule_upload, temp_dir: Path) -> tuple[Path, list[str] | None]:
+    """Return the JSON rules consumed by the engine and DOCX category metadata."""
+    default_path = BASE_DIR / "rules" / "hanger_rules.json"
+    if rule_upload is None:
+        return default_path, None
+
+    uploaded_path = save_upload(rule_upload, temp_dir)
+    if uploaded_path.suffix.casefold() != ".docx":
+        return uploaded_path, None
+
+    categories = categories_from_rule_docx(uploaded_path)
+    try:
+        payload = json.loads(default_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise AutomationError(f"Không đọc được rules mặc định: {exc}") from exc
+
+    # The DOCX is the customer's category dictionary. Keep the reviewed JSON
+    # account rules as the exact-match layer, while allowing the uploaded
+    # dictionary to add category names used by newer SOFs.
+    known = {
+        str(item).strip().upper()
+        for item in payload.get("allowed_categories", [])
+        if str(item).strip()
+    }
+    payload["allowed_categories"] = sorted(known | set(categories))
+    payload["rule_document"] = {
+        "filename": uploaded_path.name,
+        "categories": categories,
+    }
+    generated = temp_dir / "hanger_rules_from_docx.json"
+    generated.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return generated, categories
+
+
 def prepare_inputs(
     temp_dir: Path,
     use_preset: bool,
@@ -110,9 +169,7 @@ def prepare_inputs(
         for index, upload in enumerate(sof_uploads):
             save_upload(upload, sof_dir, prefix=f"{index + 1:02d}_")
 
-    rules_path = BASE_DIR / "rules" / "hanger_rules.json"
-    if rule_upload is not None:
-        rules_path = save_upload(rule_upload, temp_dir)
+    rules_path, _ = materialize_rule_upload(rule_upload, temp_dir)
 
     return order_path, sof_dir, rules_path
 
@@ -166,6 +223,8 @@ def execute_full_batch(use_preset, order_upload, sof_uploads, rule_upload) -> No
                 st.write("DeepSeek đã bật — mọi kết quả vẫn phải vượt qua kiểm tra bằng chứng nguồn.")
             if classifier_warning:
                 st.warning(classifier_warning)
+            if rule_upload is not None and Path(rule_upload.name).suffix.casefold() == ".docx":
+                st.write("Rule DOCX đã được đọc cột `Product category` và ghép vào bộ rule kiểm duyệt.")
 
             audit = run(
                 input_path=order_path,
@@ -237,9 +296,12 @@ with right:
     )
 
 rule_upload = st.file_uploader(
-    "3. Rule JSON tùy chỉnh (không bắt buộc)",
-    type=["json"],
-    help="Nếu bỏ trống, hệ thống dùng rules/hanger_rules.json đã kiểm duyệt.",
+    "3. File Rule tùy chỉnh (JSON hoặc Rule_cho_Hanger.docx, không bắt buộc)",
+    type=["json", "docx"],
+    help=(
+        "JSON dùng rule chi tiết; DOCX dùng bảng Product category/ Nhận diện "
+        "theo mẫu Rule_cho_Hanger.docx. Nếu bỏ trống, hệ thống dùng rule mặc định."
+    ),
 )
 
 if use_preset:
