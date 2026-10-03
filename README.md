@@ -1,8 +1,5 @@
 # Hanger Automation — upload trực tiếp vào n8n
 
-Dự án chạy trên Docker Desktop cho MacBook. Không cần kết nối SMB và không cần
-chép file vào thư mục input.
-
 Người dùng mở form n8n rồi tải lên:
 
 1. Một file đơn hàng `.xls`, `.xlsx`, `.docx` hoặc `.pdf`.
