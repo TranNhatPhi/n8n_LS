@@ -132,6 +132,22 @@ cũng hiểu bảng theo Label trong sheet `PACKAGING` của SOF HBE. Một quy�
 `FLATPACKED` có thể xác nhận Flat/không hanger. Nếu SOF ghi `Follow US Manual`
 nhưng không chứa mã hanger cụ thể, dòng vẫn ở `REVIEW` để tránh tự đoán mã.
 
+### Dùng OpenAI thay cho DeepSeek
+
+Engine dùng cùng giao thức Chat Completions và đọc key từ biến môi trường hoặc
+Streamlit Secrets; không ghi API key vào mã nguồn. Cấu hình:
+
+```toml
+HANGER_LLM_ENABLED = "true"
+HANGER_LLM_PROVIDER = "openai"
+OPENAI_API_KEY = "sk-..."
+OPENAI_MODEL = "gpt-4.1-mini"
+OPENAI_BASE_URL = "https://api.openai.com/v1"
+```
+
+Các rule cố định vẫn chạy trước; OpenAI chỉ xử lý các dòng còn `REVIEW` và kết
+quả vẫn phải vượt qua kiểm tra bằng chứng SOF.
+
 ## Kết quả
 
 Sau khi chạy xong, trình duyệt tự tải file `_KETQUA.xlsx`: node **Tải File Kết

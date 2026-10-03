@@ -60,6 +60,7 @@ def apply_streamlit_secrets() -> None:
     """Copy only known runtime settings from Streamlit Secrets to the process."""
     allowed = (
         "HANGER_LLM_ENABLED",
+        "HANGER_LLM_PROVIDER",
         "HANGER_LLM_BATCH_SIZE",
         "HANGER_LLM_MAX_CALLS",
         "HANGER_LLM_MAX_EVIDENCE_CHARS",
@@ -70,6 +71,11 @@ def apply_streamlit_secrets() -> None:
         "DEEPSEEK_API_KEY_3",
         "DEEPSEEK_MODEL",
         "DEEPSEEK_BASE_URL",
+        "OPENAI_API_KEY",
+        "OPENAI_API_KEY_2",
+        "OPENAI_API_KEY_3",
+        "OPENAI_MODEL",
+        "OPENAI_BASE_URL",
         "DEEPSEEK_TIMEOUT_SECONDS",
         "HANGER_CACHE_URL",
         "HANGER_CACHE_TTL_DAYS",
@@ -171,7 +177,15 @@ def build_classifier():
     try:
         return DeepSeekClassifier.from_env(), ""
     except Exception as exc:
-        return None, f"Không thể khởi tạo DeepSeek: {exc}"
+        return None, f"Không thể khởi tạo LLM: {exc}"
+
+
+def provider_label(provider: str) -> str:
+    if provider == "deepseek":
+        return "DeepSeek"
+    if provider == "openai":
+        return "OpenAI"
+    return "LLM"
 
 
 def result_table(rows: list[dict]) -> list[dict]:
@@ -210,9 +224,12 @@ def execute_full_batch(order_upload, sof_uploads, rule_upload) -> None:
             st.write(f"Đơn hàng: `{order_path.name}`")
             st.write(f"Số SOForm: `{len(list(sof_dir.iterdir()))}`")
             if classifier is None:
-                st.write("DeepSeek đang tắt — dòng chưa có rule chắc chắn sẽ chuyển REVIEW.")
+                st.write("LLM đang tắt — dòng chưa có rule chắc chắn sẽ chuyển REVIEW.")
             else:
-                st.write("DeepSeek đã bật — mọi kết quả vẫn phải vượt qua kiểm tra bằng chứng nguồn.")
+                st.write(
+                    f"LLM `{classifier.provider}` đã bật — mọi kết quả vẫn phải vượt qua "
+                    "kiểm tra bằng chứng nguồn."
+                )
             if classifier_warning:
                 st.warning(classifier_warning)
             if rule_upload is not None and Path(rule_upload.name).suffix.casefold() == ".docx":
@@ -290,16 +307,19 @@ rule_upload = st.file_uploader(
 
 apply_streamlit_secrets()
 llm_flag = os.environ.get("HANGER_LLM_ENABLED", "false").strip().casefold()
+llm_provider = os.environ.get("HANGER_LLM_PROVIDER", "deepseek").strip().casefold()
+llm_key_prefix = "OPENAI_API_KEY" if llm_provider == "openai" else "DEEPSEEK_API_KEY"
 llm_key_present = any(
     os.environ.get(name, "").strip()
-    for name in ("DEEPSEEK_API_KEY", "DEEPSEEK_API_KEY_2", "DEEPSEEK_API_KEY_3")
+    for name in (llm_key_prefix, f"{llm_key_prefix}_2", f"{llm_key_prefix}_3")
 )
+llm_label = "OpenAI" if llm_provider == "openai" else "DeepSeek"
 if llm_flag == "true" and llm_key_present:
-    st.caption("🟢 DeepSeek: đã cấu hình, sẽ xử lý các dòng REVIEW sau lớp rule cố định.")
+    st.caption(f"🟢 {llm_label}: đã cấu hình, sẽ xử lý các dòng REVIEW sau lớp rule cố định.")
 elif llm_flag == "true":
-    st.caption("🟠 DeepSeek: đang bật nhưng chưa có DEEPSEEK_API_KEY hợp lệ.")
+    st.caption(f"🟠 {llm_label}: đang bật nhưng chưa có {llm_key_prefix} hợp lệ.")
 else:
-    st.caption("⚪ DeepSeek: đang tắt; lượt chạy chỉ dùng rule cố định và kiểm chứng SOF.")
+    st.caption(f"⚪ {llm_label}: đang tắt; lượt chạy chỉ dùng rule cố định và kiểm chứng SOF.")
 
 ready = order_upload is not None and 0 < len(sof_uploads) <= 20
 if len(sof_uploads) > 20:
@@ -344,8 +364,8 @@ if result:
     llm_info = result.get("llm", {})
     if not llm_info.get("enabled"):
         st.warning(
-            "DeepSeek chưa chạy trong lượt này. Cần cấu hình Streamlit Secrets "
-            "`HANGER_LLM_ENABLED=true` và `DEEPSEEK_API_KEY`."
+            "LLM chưa chạy trong lượt này. Cần cấu hình Streamlit Secrets "
+            "`HANGER_LLM_ENABLED=true`, `HANGER_LLM_PROVIDER` và API key tương ứng."
         )
     else:
         llm_calls = int(llm_info.get("api_calls", 0) or 0)
@@ -353,17 +373,18 @@ if result:
         llm_returned = int(llm_info.get("groups_returned", 0) or 0)
         if llm_calls:
             st.success(
-                f"DeepSeek đã chạy: model `{llm_info.get('model', 'unknown')}`, "
+                f"{provider_label(llm_info.get('provider', ''))} đã chạy: "
+                f"model `{llm_info.get('model', 'unknown')}`, "
                 f"{llm_calls} API call, {llm_returned}/{llm_groups} nhóm trả kết quả."
             )
         else:
             st.info(
-                "DeepSeek đã bật nhưng lượt này không phát sinh API call "
+                f"{provider_label(llm_info.get('provider', ''))} đã bật nhưng lượt này không phát sinh API call "
                 "(các dòng đều được xử lý bởi rule cố định hoặc không còn dòng REVIEW)."
             )
     llm_failures = llm_info.get("failures", [])
     if llm_failures:
-        st.warning("DeepSeek: " + "; ".join(llm_failures))
+        st.warning(f"{provider_label(llm_info.get('provider', ''))}: " + "; ".join(llm_failures))
 
     download_cols = st.columns(3)
     if result["result_bytes"]:

@@ -23,6 +23,10 @@ def _clean(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value)).strip()
 
 
+def _provider_label(provider: str) -> str:
+    return "DeepSeek" if provider == "deepseek" else "OpenAI"
+
+
 def _positive_int(name: str, default: int, minimum: int, maximum: int) -> int:
     raw = os.environ.get(name, str(default)).strip()
     try:
@@ -48,6 +52,7 @@ def _probability(name: str, default: float) -> float:
 @dataclass(frozen=True)
 class DeepSeekSettings:
     api_keys: tuple[str, ...]
+    provider: str = "deepseek"
     base_url: str = "https://api.deepseek.com"
     model: str = "deepseek-flash"
     timeout_seconds: int = 90
@@ -64,15 +69,26 @@ class DeepSeekSettings:
             raise ValueError("HANGER_LLM_ENABLED must be true or false")
         if enabled == "false":
             return None
-        api_keys = _api_keys_from_env()
+        provider = os.environ.get("HANGER_LLM_PROVIDER", "deepseek").strip().casefold()
+        if provider not in {"deepseek", "openai"}:
+            raise ValueError("HANGER_LLM_PROVIDER must be deepseek or openai")
+        key_prefix = "OPENAI_API_KEY" if provider == "openai" else "DEEPSEEK_API_KEY"
+        api_keys = _api_keys_from_env(key_prefix)
         if not api_keys:
             raise ValueError(
-                "HANGER_LLM_ENABLED is true but DEEPSEEK_API_KEY is empty"
+                f"HANGER_LLM_ENABLED is true but {key_prefix} is empty"
             )
+        if provider == "openai":
+            base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+            model = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")
+        else:
+            base_url = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+            model = os.environ.get("DEEPSEEK_MODEL", "deepseek-flash")
         return cls(
             api_keys=api_keys,
-            base_url=os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com").strip().rstrip("/"),
-            model=os.environ.get("DEEPSEEK_MODEL", "deepseek-flash").strip(),
+            provider=provider,
+            base_url=base_url.strip().rstrip("/"),
+            model=model.strip(),
             timeout_seconds=_positive_int("DEEPSEEK_TIMEOUT_SECONDS", 90, 10, 600),
             batch_size=_positive_int("HANGER_LLM_BATCH_SIZE", 12, 1, 30),
             max_calls=_positive_int("HANGER_LLM_MAX_CALLS", 20, 1, 200),
@@ -82,17 +98,17 @@ class DeepSeekSettings:
         )
 
 
-def _api_keys_from_env() -> tuple[str, ...]:
-    """Collect every configured DeepSeek key so batches can run in parallel.
+def _api_keys_from_env(prefix: str = "DEEPSEEK_API_KEY") -> tuple[str, ...]:
+    """Collect every configured provider key so batches can run in parallel.
 
-    DEEPSEEK_API_KEY may hold one key or several separated by commas. Numbered
-    DEEPSEEK_API_KEY_2..9 slots are appended after it. Order is preserved and
+    The primary key may hold one key or several comma-separated keys. Numbered
+    ``*_2``..``*_9`` slots are appended after it. Order is preserved and
     duplicates are dropped so each worker thread gets a distinct key.
     """
     raw: list[str] = []
-    raw.extend(os.environ.get("DEEPSEEK_API_KEY", "").split(","))
+    raw.extend(os.environ.get(prefix, "").split(","))
     for index in range(2, 10):
-        raw.extend(os.environ.get(f"DEEPSEEK_API_KEY_{index}", "").split(","))
+        raw.extend(os.environ.get(f"{prefix}_{index}", "").split(","))
     keys: list[str] = []
     for candidate in raw:
         candidate = candidate.strip()
@@ -449,6 +465,7 @@ class DeepSeekClassifier:
 
     def __init__(self, settings: DeepSeekSettings, cache: "DecisionCache | None" = None):
         self.settings = settings
+        self.provider = settings.provider
         self.cache = cache
         self.min_confidence = settings.min_confidence
         self.calls = 0
@@ -768,9 +785,9 @@ class DeepSeekClassifier:
                 parsed = json.loads(content)
                 if isinstance(parsed, dict) and isinstance(parsed.get("decisions"), list):
                     return parsed
-                last_error = "DeepSeek JSON response has no decisions array"
+                last_error = f"{_provider_label(self.provider)} JSON response has no decisions array"
             except urllib.error.HTTPError as exc:
-                last_error = f"DeepSeek HTTP {exc.code}"
+                last_error = f"{_provider_label(self.provider)} HTTP {exc.code}"
                 # These responses cannot be fixed by immediately resending the
                 # same request. In particular, 402 means the account has no
                 # credit, so retrying only consumes call budget and duplicates
@@ -778,7 +795,7 @@ class DeepSeekClassifier:
                 if exc.code in {400, 401, 402, 403, 404, 429}:
                     break
             except (urllib.error.URLError, socket.timeout, TimeoutError) as exc:
-                last_error = f"DeepSeek connection failed: {type(exc).__name__}"
+                last_error = f"{_provider_label(self.provider)} connection failed: {type(exc).__name__}"
             except (KeyError, IndexError, TypeError, json.JSONDecodeError):
-                last_error = "DeepSeek returned invalid JSON"
-        raise RuntimeError(last_error or "DeepSeek returned no usable JSON")
+                last_error = f"{_provider_label(self.provider)} returned invalid JSON"
+        raise RuntimeError(last_error or f"{_provider_label(self.provider)} returned no usable JSON")
