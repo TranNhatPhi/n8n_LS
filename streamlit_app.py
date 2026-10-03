@@ -288,6 +288,19 @@ rule_upload = st.file_uploader(
     ),
 )
 
+apply_streamlit_secrets()
+llm_flag = os.environ.get("HANGER_LLM_ENABLED", "false").strip().casefold()
+llm_key_present = any(
+    os.environ.get(name, "").strip()
+    for name in ("DEEPSEEK_API_KEY", "DEEPSEEK_API_KEY_2", "DEEPSEEK_API_KEY_3")
+)
+if llm_flag == "true" and llm_key_present:
+    st.caption("🟢 DeepSeek: đã cấu hình, sẽ xử lý các dòng REVIEW sau lớp rule cố định.")
+elif llm_flag == "true":
+    st.caption("🟠 DeepSeek: đang bật nhưng chưa có DEEPSEEK_API_KEY hợp lệ.")
+else:
+    st.caption("⚪ DeepSeek: đang tắt; lượt chạy chỉ dùng rule cố định và kiểm chứng SOF.")
+
 ready = order_upload is not None and 0 < len(sof_uploads) <= 20
 if len(sof_uploads) > 20:
     st.error("Chỉ được tải tối đa 20 file SOForm trong một lần chạy.")
@@ -328,7 +341,27 @@ if result:
     st.caption(f"Thời gian xử lý: {result['duration']} giây")
     if result["errors"]:
         st.warning("\n".join(result["errors"]))
-    llm_failures = result.get("llm", {}).get("failures", [])
+    llm_info = result.get("llm", {})
+    if not llm_info.get("enabled"):
+        st.warning(
+            "DeepSeek chưa chạy trong lượt này. Cần cấu hình Streamlit Secrets "
+            "`HANGER_LLM_ENABLED=true` và `DEEPSEEK_API_KEY`."
+        )
+    else:
+        llm_calls = int(llm_info.get("api_calls", 0) or 0)
+        llm_groups = int(llm_info.get("groups_requested", 0) or 0)
+        llm_returned = int(llm_info.get("groups_returned", 0) or 0)
+        if llm_calls:
+            st.success(
+                f"DeepSeek đã chạy: model `{llm_info.get('model', 'unknown')}`, "
+                f"{llm_calls} API call, {llm_returned}/{llm_groups} nhóm trả kết quả."
+            )
+        else:
+            st.info(
+                "DeepSeek đã bật nhưng lượt này không phát sinh API call "
+                "(các dòng đều được xử lý bởi rule cố định hoặc không còn dòng REVIEW)."
+            )
+    llm_failures = llm_info.get("failures", [])
     if llm_failures:
         st.warning("DeepSeek: " + "; ".join(llm_failures))
 
