@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import sys
 import tempfile
 import time
@@ -151,7 +150,6 @@ def materialize_rule_upload(rule_upload, temp_dir: Path) -> tuple[Path, list[str
 
 def prepare_inputs(
     temp_dir: Path,
-    use_preset: bool,
     order_upload,
     sof_uploads,
     rule_upload,
@@ -159,15 +157,9 @@ def prepare_inputs(
     sof_dir = temp_dir / "sofs"
     sof_dir.mkdir(parents=True, exist_ok=True)
 
-    if use_preset:
-        order_path = BASE_DIR / "testn8n" / "filedonhang" / "VLK VLH LPO 09.09.26.XLS"
-        for source in (BASE_DIR / "testn8n" / "fileSOForm").glob("*"):
-            if source.is_file() and source.suffix.casefold() in {".xls", ".xlsx", ".docx", ".pdf"}:
-                shutil.copy2(source, sof_dir / source.name)
-    else:
-        order_path = save_upload(order_upload, temp_dir)
-        for index, upload in enumerate(sof_uploads):
-            save_upload(upload, sof_dir, prefix=f"{index + 1:02d}_")
+    order_path = save_upload(order_upload, temp_dir)
+    for index, upload in enumerate(sof_uploads):
+        save_upload(upload, sof_dir, prefix=f"{index + 1:02d}_")
 
     rules_path, _ = materialize_rule_upload(rule_upload, temp_dir)
 
@@ -203,14 +195,14 @@ def result_table(rows: list[dict]) -> list[dict]:
     return [{name: row.get(name, "") for name in columns} for row in rows]
 
 
-def execute_full_batch(use_preset, order_upload, sof_uploads, rule_upload) -> None:
+def execute_full_batch(order_upload, sof_uploads, rule_upload) -> None:
     started = time.monotonic()
     with tempfile.TemporaryDirectory(prefix="hanger_streamlit_") as temp_name:
         temp_dir = Path(temp_name)
         output_dir = temp_dir / "output"
         output_dir.mkdir()
         order_path, sof_dir, rules_path = prepare_inputs(
-            temp_dir, use_preset, order_upload, sof_uploads, rule_upload
+            temp_dir, order_upload, sof_uploads, rule_upload
         )
         classifier, classifier_warning = build_classifier()
 
@@ -274,25 +266,17 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-use_preset = st.toggle(
-    "Dùng bộ dữ liệu đầy đủ có sẵn để thử nghiệm",
-    value=False,
-    help="Sử dụng file VLK/VLH/LPO đầy đủ và toàn bộ SOForm trong dự án.",
-)
-
 left, right = st.columns(2)
 with left:
     order_upload = st.file_uploader(
         "1. File đơn hàng",
         type=["xls", "xlsx", "docx", "pdf"],
-        disabled=use_preset,
     )
 with right:
     sof_uploads = st.file_uploader(
         "2. Các file SOForm tương ứng (tối đa 20)",
         type=["xls", "xlsx", "docx", "pdf"],
         accept_multiple_files=True,
-        disabled=use_preset,
     )
 
 rule_upload = st.file_uploader(
@@ -304,10 +288,7 @@ rule_upload = st.file_uploader(
     ),
 )
 
-if use_preset:
-    st.info("Bộ mẫu đầy đủ đã sẵn sàng. Quá trình có thể mất vài phút tùy cấu hình DeepSeek.")
-
-ready = use_preset or (order_upload is not None and 0 < len(sof_uploads) <= 20)
+ready = order_upload is not None and 0 < len(sof_uploads) <= 20
 if len(sof_uploads) > 20:
     st.error("Chỉ được tải tối đa 20 file SOForm trong một lần chạy.")
 
@@ -318,7 +299,7 @@ if st.button(
     disabled=not ready,
 ):
     try:
-        execute_full_batch(use_preset, order_upload, sof_uploads, rule_upload)
+        execute_full_batch(order_upload, sof_uploads, rule_upload)
     except AutomationError as exc:
         st.error(f"Không thể xử lý: {exc}")
     except Exception as exc:
