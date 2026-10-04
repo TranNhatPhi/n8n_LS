@@ -261,6 +261,7 @@ def execute_full_batch(order_upload, sof_uploads, rule_upload) -> None:
             "rows": audit.get("row_results", []),
             "errors": audit.get("errors", []),
             "llm": audit.get("llm", {}),
+            "llm_warning": classifier_warning,
             "result_name": result_path.name,
             "result_bytes": result_path.read_bytes() if result_path.is_file() else b"",
             "clean_name": clean_path.name,
@@ -363,10 +364,13 @@ if result:
         st.warning("\n".join(result["errors"]))
     llm_info = result.get("llm", {})
     if not llm_info.get("enabled"):
-        st.warning(
-            "LLM chưa chạy trong lượt này. Cần cấu hình Streamlit Secrets "
-            "`HANGER_LLM_ENABLED=true`, `HANGER_LLM_PROVIDER` và API key tương ứng."
-        )
+        if result.get("llm_warning"):
+            st.error(f"LLM chưa chạy trong lượt này. {result['llm_warning']}")
+        else:
+            st.warning(
+                "LLM chưa chạy trong lượt này. Cần cấu hình Streamlit Secrets "
+                "`HANGER_LLM_ENABLED=true`, `HANGER_LLM_PROVIDER` và API key tương ứng."
+            )
     else:
         llm_calls = int(llm_info.get("api_calls", 0) or 0)
         llm_groups = int(llm_info.get("groups_requested", 0) or 0)
